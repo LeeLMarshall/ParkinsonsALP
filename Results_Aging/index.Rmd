@@ -1,0 +1,607 @@
+---
+title: "Results Aging"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r setup, include=FALSE}
+source("../code/common.R")
+```
+
+# Stats for Results Section
+
+## In appendix, padlock
+
+```{r}
+apax <- fread("../Appendix_AgeAcceleration_Padlock/www/m6_Appendix_AgeAcceleration_Padlock.csv")
+apad <- readRDS("../Appendix_AgeAcceleration_Padlock/www/m6_methylation.RDS")
+```
+
+```{r, include=TRUE}
+message("Number of loci ", nrow(apax))
+
+message("Cases and controls: ")
+print(apad$key[, table(Diagnosis)])
+
+message("Number of significant aging loci ", 
+	apax[, sum(p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, na.rm=TRUE)])
+
+message("Number of affected genes ", 
+	apax[p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, length(unique(Gene))])
+
+message("Age range of healthy controls ", 
+  apad$key[Diagnosis == "Control", range(Age) %>% paste(collapse=":")])
+```
+
+Direction enrichment
+
+```{r, include=TRUE}
+apax[, table(p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, sign(C.DiagnosisControl.Age))] %>% tee %>% fisher.test
+```
+
+## In appendix, rnaseq
+
+```{r}
+apar <- fread("../Appendix_AgeAcceleration_RNAseq/www/r1_Appendix_AgeAcceleration_RNAseq.csv")
+apard <- readRDS("../Appendix_AgeAcceleration_RNAseq/www/r1_rnaseq.RDS")
+```
+
+```{r, include=TRUE}
+message("Number of loci ", nrow(apar))
+
+message("Cases and controls: ")
+print(apard$key[, table(Diagnosis)])
+
+message("Number of significant aging loci ", 
+	apar[, sum(p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, na.rm=TRUE)])
+
+message("Number of affected genes ", 
+	apar[p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, length(unique(SYMBOL))])
+
+```
+
+Direction enrichment
+
+```{r, include=TRUE}
+apax[, table(p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, sign(C.DiagnosisControl.Age))] %>% tee %>% fisher.test
+```
+
+
+## In PFC 
+
+```{r}
+pfcax <- fread("../Brain_AgeAcceleration_Padlock/www/m6_Brain_AgeAcceleration_Padlock.csv")
+pfcad <- readRDS("../Brain_AgeAcceleration_Padlock/www/m6_methylation.RDS")
+```
+
+```{r, include=TRUE}
+message("Number of loci ", nrow(pfcax))
+
+message("Number of CG and Non-CG loci")
+pfcax[, table(Type == "CG")]
+
+message("Cases and controls: ")
+print(pfcad$key[, table(Group)])
+
+message("Number of significant aging loci ", 
+	pfcax[, sum(p.adjust(P.GroupCTRL.Age, "fdr") < 0.05, na.rm=TRUE)])
+
+message("Number of affected genes ", 
+	pfcax[p.adjust(P.GroupCTRL.Age, "fdr") < 0.05, length(unique(Gene))])
+
+message("Age range of healthy controls ", 
+  pfcad$key[Group == "CTRL", range(Age) %>% paste(collapse=":")])
+
+```
+
+Direction enrichment
+
+```{r, include=TRUE}
+pfcax[, table(p.adjust(P.GroupCTRL.Age, "fdr") < 0.05, sign(C.GroupCTRL.Age))] %>% tee %>% fisher.test
+```
+
+## Enrichment of ALP pathways
+
+### Padlocks
+
+```{r}
+getGoGenes <- function(term, mart=mymart) {
+  url <- glue("http://golr-aux.geneontology.io/solr/select?defType=edismax&qt=standard&indent=on&wt=csv&rows=100000&start=0&fl=bioentity_name,bioentity,bioentity_label&facet=true&facet.mincount=1&facet.sort=count&json.nl=arrarr&facet.limit=25&hl=true&hl.simple.pre=%3Cem%20class=%22hilite%22%3E&hl.snippets=1000&csv.encapsulator=&csv.separator=%09&csv.header=false&csv.mv.separator=%7C&fq=regulates_closure:%22{term}%22&fq=document_category:%22bioentity%22&fq=taxon_subset_closure_label:%22Homo%20sapiens%22&facet.field=source&facet.field=taxon_subset_closure_label&facet.field=type&facet.field=panther_family_label&facet.field=annotation_class_list_label&facet.field=regulates_closure_label&q=*:*")
+  genes <- fread(url, header = FALSE)
+  return(genes$V3)
+}
+
+
+pathways <- list(
+  list(term="GO:0061912", name="Selective autophagy"),
+  list(term="GO:0016236", name="Macroautophagy"),
+  list(term="GO:0005764", name="Lysosomes"),
+  list(term="GO:0061684", name="Chaperone-mediated autophagy"),
+  list(term="GO:0006914", name="Autophagy")
+  )
+
+pathways <- foreach(p = pathways) %do% {
+  p$genes <- getGoGenes(p$term, mymart)
+  p
+}
+
+
+pd <- foreach(p = pathways, .combine = rbind) %do% {
+  genes <- p$genes
+  colP  <- "P.DiagnosisControl.Age"
+  colFC <- "C.DiagnosisControl.Age"
+  dt <- apax[, 
+          list(
+            Q = get(colP) %>% p.adjust("fdr"),
+            FC= get(colFC),
+            Gene)]
+  res1 <- 
+        dt[, table(Q < 0.05, Gene %in% genes)] %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "All"]
+  res1up <- 
+        dt[, table(Q < 0.05 & sign(FC) > 0, Gene %in% genes)] %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "Hyper-"]
+  res1down <- 
+        dt[, table(Q < 0.05 & sign(FC) < 0, Gene %in% genes)] %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "Hypo-"]
+
+  colP  <- "P.GroupCTRL.Age"
+  colFC <- "C.GroupCTRL.Age"
+  dt <- pfcax[, 
+          list(
+            Q = get(colP) %>% p.adjust("fdr"),
+            FC= get(colFC),
+            Gene)]
+  res2 <- 
+        dt[, table( Q < 0.05, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "PFC"] %>%
+          .[, Dir  := "All"]
+  res2up <- 
+        dt[, table( Q < 0.05 & sign(FC) > 0, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "PFC"] %>%
+          .[, Dir  := "Hyper-"]
+
+  res2down <- 
+        dt[, table( Q < 0.05 & sign(FC) < 0, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "PFC"] %>%
+          .[, Dir  := "Hypo-"]
+
+  rbindlist(list(res1, res1up, res1down, res2, res2up, res2down))
+}
+if (!dir.exists("www")) dir.create("www")
+fwrite(pd, file = "www/enrichment_Pathways_DMCs.csv")
+
+```
+
+```{r, include=TRUE}
+pd[p.value < 0.05][order(Type), list(Type, Name, Dir, estimate, p.value)]
+```
+
+### Appendix RNA-seq
+
+```{r}
+pd <- foreach(p = pathways, .combine = rbind) %do% {
+  genes <- p$genes
+  colP  <- "P.DiagnosisControl.Age"
+  colFC <- "C.DiagnosisControl.Age"
+  dt <- apar[, 
+          list(
+            P = get(colP),
+            Q = get(colP) %>% p.adjust("fdr"),
+            FC= get(colFC),
+            Gene = SYMBOL)]
+  res1 <- 
+        dt[, table(P < 0.05, Gene %in% genes)] %>% tee %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "All"]
+  res1up <- 
+        dt[, table(P < 0.05 & sign(FC) > 0, Gene %in% genes)] %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "Hyper-"]
+  res1down <- 
+        dt[, table(P < 0.05 & sign(FC) < 0, Gene %in% genes)] %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "Hypo-"]
+
+
+  rbindlist(list(res1, res1up, res1down))
+}
+
+if (!dir.exists("www")) dir.create("www")
+fwrite(pd, file = "www/enrichment_Pathways_DEGs.csv")
+```
+
+```{r, include=TRUE}
+pd[order(Type), list(Type, Name, Dir, estimate, p.value)]
+```
+
+
+## Aging hallmarks
+
+```{r}
+p_load("RobustRankAggreg")
+
+computeORs <- function(dt) {
+  dt <- 
+    foreach (gene = unique(dt$Gene), .combine = rbind) %dopar% {
+      require(data.table)
+      tryCatch({
+        t <- dt[, table(Gene == gene, Significant == TRUE)]
+        f <- fisher.test(t, alternative = "greater")
+        data.table(OR = f$estimate, P = f$p.value, Gene = gene)    
+      }, error = function(e) {
+        message(e)
+        data.table(OR = NA, P = NA, Gene = gene)
+      })
+    }
+  dt
+}
+
+
+
+epfc <- withCluster(computeORs(pfcax[, list(Gene, Significant = p.adjust(P.GroupCTRL.Age, "fdr") < 0.05)]), nNodes = 10)
+eapx  <- withCluster(computeORs(apax[, list(Gene, Significant = p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05)]), nNodes = 10)
+hallmarks <- aggregateRanks(
+  list(
+    epfc[order(P), Gene],
+    eapx[order(P), Gene]
+  )
+)  
+setDT(hallmarks)
+setnames(hallmarks, "Name", "Gene")
+hallmarks <- 
+merge(hallmarks, epfc[, list(Gene, PFC.OR=OR, PFC.P=P)], by = "Gene") %>% 
+		merge(., eapx[, list(Gene, APX.OR=OR, APX.P=P)], by = "Gene")
+
+if (!dir.exists("www")) dir.create("www")
+write.table(hallmarks[order(Score)], file = "www/Aging_Hallmarks.csv", sep = ",", row.names = FALSE)
+
+```
+
+```{r, include=TRUE}
+hallmarks[order(Score)][1:10]
+```
+
+
+## Aging and PD effects
+
+### Padlocks
+
+```{r}
+pfcx <- fread("../Brain_PFCRep_Padlock_withGLU/www/m6_Brain_PFCRep_Padlock_withGLU.csv")
+apx <- fread("../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv")
+```
+
+```{r, include=TRUE}
+message("In appendix")
+merge(
+        apax[, list(
+                    ID, 
+                    C = C.DiagnosisControl.Age, 
+                    P=P.DiagnosisControl.Age, 
+                    Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+        apx[, list(ID, logFC, P.Value, adj.P.Val)],
+        by = "ID"
+      ) %>%
+.[P < 0.05 & P.Value < 0.05, ] %>%
+.[, list(
+      AgingEffect = abs(C), 
+      PDEffect = abs(logFC),
+      Type = "Appendix"
+      )
+] %>% 
+.[, cor.test(AgingEffect, PDEffect, method = "pearson")]
+
+```
+
+```{r, include=TRUE}
+message("In brain")
+merge(
+        pfcax[, list(
+                    ID, 
+                    C = C.GroupCTRL.Age, 
+                    P=P.GroupCTRL.Age, 
+                    Q = p.adjust(P.GroupCTRL.Age, "fdr"))],
+        pfcx[, list(ID, logFC, P.Value, adj.P.Val)],
+        by = "ID"
+      ) %>%
+.[P < 0.05 & P.Value < 0.05, ] %>%
+.[, list(
+      AgingEffect = abs(C), 
+      PDEffect = abs(logFC),
+      Type = "Appendix"
+      )
+] %>% 
+.[, cor.test(AgingEffect, PDEffect, method = "pearson")]
+
+```
+
+### RNAseq
+
+```{r, include=TRUE}
+message("In appendix, RNA-seq, ALP genes only")
+alpGenes <- apax[, unique(Gene)]
+apr_cc <- fread("../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv")
+merge(
+        apar[, list(
+                    SYMBOL, 
+                    C = C.DiagnosisControl.Age, 
+                    P=P.DiagnosisControl.Age, 
+                    Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+        apr_cc[, list(SYMBOL, logFC, P.Value, adj.P.Val)],
+        by = "SYMBOL"
+      ) %>%
+.[SYMBOL %in% alpGenes & P < 0.05 & P.Value < 0.05, ] %>%
+.[, list(
+      AgingEffect = abs(C), 
+      PDEffect = abs(logFC),
+      Type = "Appendix"
+      )
+] %>% 
+.[, cor.test(AgingEffect, PDEffect, method = "pearson")]
+
+```
+
+## Decelerated aging
+
+### In appendix padlocks
+
+```{r, include=TRUE}
+predicted <- readRDS("../Appendix_AgeAcceleration_Padlock/m6_ageAcceleration.RDS")
+predicted[, t.test(P, A, paired = TRUE), Diagnosis]
+```
+
+### In appendix RNAseq
+
+```{r, include=TRUE}
+# TODO limit classifier to ALP genes only
+predicted_rna <- readRDS("../Appendix_AgeAcceleration_RNAseq/r1_ageAcceleration.RDS")
+predicted_rna[, t.test(P, A, paired = TRUE), Diagnosis]
+```
+
+
+# Supplementary figures
+
+
+## Supp. Fig. Aging 4
+
+
+```{r, include=TRUE, fig.cap="Enrichment of genomic elements in Apx aging"}
+knitr::include_graphics("../Discover_GenomicEnrichment/index_files/figure-html/unnamed-chunk-25-1.png")
+```
+
+
+## Supp. Fig. Aging 5
+
+```{r, include=TRUE, fig.cap="Enrichment of ALP pathways in aging"}
+pd <- fread("www/enrichment_Pathways_DMCs.csv")
+ggplot(pd, aes(Name, log(estimate), color = p.value < 0.05)) +
+  geom_point(size = 4) + 
+  geom_hline(yintercept = 0) + 
+  ylab("OR, log") +
+  facet_grid(Type ~ Dir) + 
+  theme_bw(base_size = 12) + 
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top") 
+```
+
+## Supp. Fig. Aging 6
+
+```{r}
+# Aging vs PD effects in appendix RNAseq
+alpGenes <- apax[, unique(Gene)]
+path <- "../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv"
+apxpdfit <- fread(path)
+apxpdfit <- apxpdfit[SYMBOL %in% alpGenes]
+
+path <- "../Appendix_AgeAcceleration_RNAseq/www/r1_Appendix_AgeAcceleration_RNAseq.csv"
+apxafit <- fread(path)
+apxafit <- apxafit[SYMBOL %in% alpGenes]
+
+pd <- merge(
+            apxafit[, list(
+                        SYMBOL, 
+                        C = C.DiagnosisControl.Age, 
+                        P=P.DiagnosisControl.Age, 
+                        Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+            apxpdfit[, list(SYMBOL, logFC, P.Value, adj.P.Val)],
+            by = "SYMBOL"
+          ) %>%
+  .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, list(
+          AgingEffect = abs(C), 
+          PDEffect = abs(logFC),
+          Type = "Appendix"
+          )
+  ]
+
+pd[, range(AgingEffect)]
+pd[, range(PDEffect)]
+
+pA <- 
+  pd %>%
+  ggplot(., aes(AgingEffect, PDEffect)) + 
+    geom_point(shape = 1, color = "grey") +
+    geom_smooth(method = "lm", color = "black") + 
+    stat_cor(method = "pearson") +
+    scale_x_continuous(
+      labels = scales::number_format(accuracy = 0.01)) + 
+    xlab("Absolute aging effect") + 
+    ylab("Absolute PD effect") +
+    theme_bw(base_size = 12)
+
+
+
+# Normalized aging trend
+computeTrends <- function(X, fit, colP, colFC, age, group) {
+  n <- nrow(X)
+  ids <- fit[ get(colFC) > 0][order(get(colP)), ENSEMBL][1:n]
+  ids <- ids[ ids %in% rownames(X) ]
+  w <- fit[ENSEMBL %in% ids, get(colFC)]
+  w <- w / sum(w)
+  trend <- (X[ids,] * w) %>% colSums(na.rm=TRUE)
+  pd <- data.table(Dir = "Hyper-M", Age = age, 
+    Trend = trend, Group = group)
+
+  ids <- fit[ get(colFC) < 0][order(get(colP)), ENSEMBL][1:n]
+  ids <- ids[ ids %in% rownames(X) ]
+  w <- fit[ENSEMBL %in% ids, get(colFC)]
+  w <- w / sum(w)
+  trend <- (X[ids,] * w) %>% colSums(na.rm=TRUE)
+  pd <- rbind(pd, data.table(Dir = "Hypo-M", Age = age, 
+    Trend = trend, Group = group))
+  pd
+}
+
+# Appendix
+
+apxdata <- readRDS("../Appendix_AgeAcceleration_RNAseq/www/r1_rnaseq.RDS")
+X <- lm( t(apxdata$rnaseq %>% na.omit) ~ ., 
+  data = apxdata$modelData %>% select(-Age))$residuals %>% t
+
+pd <- computeTrends(X, apxafit,
+                    colP  = "P.DiagnosisControl.Age",
+                    colFC = "C.DiagnosisControl.Age",
+                    age   = apxdata$modelData$Age,
+                    group = apxdata$modelData$Diagnosis) %>%
+  .[, Type := "Appendix"] %>% 
+  .[, Group := factor(Group, levels = c("Control", "PD/LBD"))]
+pB <- 
+  pd %>%
+  ggplot(., aes(Age, Trend, color = Group)) + 
+    geom_point(alpha = 0.3, aes(shape = Group, fill = Group)) + 
+    geom_smooth(method = 'lm', se = FALSE) + 
+    stat_cor(method = "pearson") +
+    ylab("Mean normalized modification") + 
+    facet_grid(Type ~ Dir, scales = "free") + 
+    scale_shape_manual(values = c(16, 17)) +
+    scale_color_manual(values = c("black", "#e31a1c")) +
+    scale_fill_manual(values = c("black", "#e31a1c")) +
+    # scale_y_continuous(limits = c(-0.8, 1)) + 
+    theme_bw(base_size = 12)
+
+
+
+# Age deceleration
+predicted <- readRDS("../Appendix_AgeAcceleration_RNAseq/r1_ageAcceleration.RDS")
+pC <- predicted[, 
+  list(
+    `P-A` = P-A,
+    Group = Diagnosis
+  )
+] %>%
+  ggplot(., aes(Group, `P-A`, color = Group)) + 
+    geom_boxplot(outlier.size = 0) + 
+    geom_jitter(size = 0.5, shape = 1, alpha = 0.3) + 
+    stat_compare_means(method = "t.test", 
+      aes(label = paste0("p = ", ..p.format..))) +
+    xlab("Group") + 
+    ylab("Predicted - Actual Age, years") + 
+    theme_bw(base_size = 12) +
+    scale_color_manual(values = c("black", "#e31a1c")) +
+    theme_bw(base_size = 12) + 
+    theme(
+      legend.position="top"
+      )
+```
+
+```{r, include=TRUE, fig.cap="Aging and PD in Appendix RNA-seq"}
+require(cowplot)
+legendGroup     <- get_legend(pC)
+ggdraw() +
+  draw_plot(
+    pA,
+    x = 0, y = 0, width = 0.25, height = 1) +
+  draw_plot(pB + theme(legend.position = "none"),
+    x = 0.25, y = 0, width = 0.55, height = 1) +
+  draw_plot(pC + guides(color=FALSE, shape=FALSE) + 
+    theme(legend.position = "top"),
+    x = 0.8, y = 0, width = 0.2, height = 1) +
+  draw_plot_label(
+    label = LETTERS[1:3],
+    size = 10,
+    x = c(0, 0.25, 0.8),
+    y = c(1, 1,   1))
+
+```
+
+# Supplementary tables
+
+```{r}
+url <- "../Appendix_AgeAcceleration_Padlock/www/m6_Appendix_AgeAcceleration_Padlock.csv"
+stopifnot(file.exists(url))
+```
+
+- [Supp. table 10](`r url`) Appendix aging padlock fits
+
+```{r}
+url <- "../Brain_AgeAcceleration_Padlock/www/m6_Brain_AgeAcceleration_Padlock.csv"
+stopifnot(file.exists(url))
+```
+
+- [Supp. table 11](`r url`) PFC aging padlock fits
+
+```{r}
+url <- "./www/Aging_Hallmarks.csv"
+stopifnot(file.exists(url))
+```
+
+- [Supp. table 12](`r url`) Aging Hallmark genes

@@ -1,0 +1,463 @@
+---
+title: "Methylation 2 Expression, Appendix"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R")
+p_load("annotatr")
+p_load("GenomicRanges")
+p_load("ggrepel")
+
+ftest <- function(x, y) {
+  tryCatch({
+    f <- fisher.test(table(x, y))
+    list(OR=f$estimate, P=f$p.value)    
+  }, 
+  error = function(e) {
+    return(list(OR=double(), P=double()))
+  })
+}
+
+tee <- function(obj, FUN=print, ...) {
+  FUN(obj, ...)
+  return(obj)
+}
+
+
+meth <- readRDS("../Appendix_PDvsControls_Padlock/data.RDS")
+meth$fit <- fread(
+  "../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv")
+meth$methylation <- readRDS("../Appendix_PDvsControls_Padlock/www/m6_methylation.RDS")$methylation
+
+rna <- readRDS("../Appendix_PDvsControls_RNAseq/data.RDS")
+rna$fit <- fread(
+  "../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv")
+rna$rnaseq <- readRDS("../Appendix_PDvsControls_RNAseq/www/r1_rnaseq.RDS")$rnaseq
+
+# # Clustered
+# rna <- readRDS("../Appendix_PDvsControls_RNAseq_cluster/data.RDS")
+# rna$fit <- fread(
+#   "../Appendix_PDvsControls_RNAseq_cluster/www/r1_Appendix_PDvsControls_RNAseq_cluster.csv")
+# rna$rnaseq <- readRDS("../Appendix_PDvsControls_RNAseq_cluster/r1_rnaseq.RDS")
+
+
+# GWAS genes
+gwasList <- c("GBA","NUCKS1","SLC41A1","SIPA1L2","TMEM163","CCNT2","STK39","CHMP2B","MCCC1","TMEM175","DGKQ","FAM200B","CD38","FAM47E","SNCA","HLA-DRB6","HLA-DQA1","KLHL7","NUPL2","GPNMB","MICU3","BAG3","DLG2","MIR4697","LRRK2","OGFOD2","GCH1","TMEM229B","VPS13C","ZNF646","KAT8","ARHGAP27","CRHR1","SPPL2C","MAPT","STH","KANSL1","SYT4","LSM7","DDRGK1","ITPKB","IL1R2","SCN3A","SATB1","NCKIPSD","CDC71","ALAS1","TLR9","DNAH1","BAP1","PHF7","NISCH","STAB1","ITIH3","ITIH4","ANK2","CAMK2D","ELOVL7","ZNF184","CTSB","SORBS3","PDLIM2","C8orf58","BIN3","SH3GL2","FAM171A1","GALC","COQ7","TOX3","ATP6V0A1","PSMC3IP","TUBG2")
+
+```
+
+
+```{r}
+# Annotation of methylation fits
+genome <- "hg19"
+annots <- c('hg19_cpgs', 'hg19_basicgenes', 'hg19_genes_intergenic')
+annotations <- build_annotations(genome = genome, annotations = annots)
+
+fitsgr <- with(meth$fit, GRanges(seqnames=Chr, IRanges(SNP, SNP+1)))
+if (!is.null(meth$fit$Str))
+  strand(fitsgr) <- meth$fit$Str
+values(fitsgr) <- meth$fit[, list(ID, logFC, P.Value, adj.P.Val)]
+annot <- annotate_regions(
+  regions = fitsgr,
+  annotations = annotations,
+  ignore.strand = TRUE,
+  quiet = FALSE)
+annot <- data.frame(annot) %>% setDT
+rm(fitsgr)
+
+
+```
+
+# Correlation between methylation and expression
+
+Find loci that are in gene promoters. Average methylation signal in promoters.
+Match samples across meth and RNA. See if gene expression correlates with methylation.
+
+```{r}
+promoterIDs <- annot[annot.type == "hg19_genes_promoters", list(ID, SYMBOL=annot.symbol)]
+
+# Methylation fits in promoter IDs
+mymeth <- copy(meth$fit)
+mymeth <- merge(mymeth, promoterIDs, by = "ID")
+mymeth[, sum(p.adjust(P.Value, "fdr") < 0.05, na.rm=TRUE)]
+
+# Mean methylation signal per promoter
+mysamples <- intersect(
+  meth$sample[, ID], 
+  rna$sample[, Sample_ID])
+M <- 
+  meth$methylation[mymeth$ID, mysamples] %>% 
+  cbind(mymeth[, list(ID, SYMBOL)], .) %>%
+  dplyr::select(-ID) %>%
+  .[, lapply(.SD, median, na.rm=TRUE), SYMBOL] %>%
+  reshape2::melt(id.vars = 1) %>%
+  setnames(c("Symbol", "ID", "Beta"))
+setkey(M, Symbol, ID)
+
+R <- rna$rnaseq %>% as.matrix
+colnames(R) <- rna$sample$Sample_ID
+rownames(R) <- rna$genome[match(rownames(R), ENSEMBL), SYMBOL]
+R <- R[, mysamples]
+R <-  reshape2::melt(R) %>%
+      setDT %>%
+      setnames(c("Symbol", "ID", "TPM")) %>%
+      setkey(Symbol, ID)
+
+# Get the correlations for each gene
+res <- merge(M, R, 
+              by = c("Symbol", "ID")) %>%
+      .[!is.na(Symbol)] %>%
+      .[, cor.test(Beta, TPM, use='p') %>% broom::tidy(), Symbol] 
+```
+
+Number of significant correlations by sign
+
+```{r, include=TRUE}
+res[p.adjust(p.value, "fdr") < 0.05, table(sign(estimate))]
+```
+
+Volcano plot of correlations
+
+```{r, include=TRUE}
+# Plot distribution of correlation
+ggplot(res, aes(estimate, -log10(p.value), color = p.value < 0.05)) + 
+geom_point()
+```
+
+
+# Enrichment of autophagy pathways in RNA-seq
+
+
+Enrichment of AP target genes among DEGs (q < 0.2) in RNA-seq
+
+```{r, include=TRUE}
+# Autophagy pathway genes, interrogated by padlocks?
+autophagyList <- meth$fit[, unique(Gene)]
+
+# Maybe autophagy genes are enriched among significant DE genes?
+rna$fit[, table(Sig=adj.P.Val < 0.2, InAP=SYMBOL %in% autophagyList)] %>%
+  tee %>%
+  fisher.test
+
+```
+
+Are any of the autophagy pathways enriched with significant genes or have
+higher FC or lower p value?
+
+```{r}
+library(biomaRt)
+library(GO.db)
+mymart = useMart("ensembl", dataset="hsapiens_gene_ensembl") #uses human ensembl annotations
+
+getGoGenes <- function(term, mart=mymart) {
+  url <- glue("http://golr-aux.geneontology.io/solr/select?defType=edismax&qt=standard&indent=on&wt=csv&rows=100000&start=0&fl=bioentity_name,bioentity,bioentity_label&facet=true&facet.mincount=1&facet.sort=count&json.nl=arrarr&facet.limit=25&hl=true&hl.simple.pre=%3Cem%20class=%22hilite%22%3E&hl.snippets=1000&csv.encapsulator=&csv.separator=%09&csv.header=false&csv.mv.separator=%7C&fq=regulates_closure:%22{term}%22&fq=document_category:%22bioentity%22&fq=taxon_subset_closure_label:%22Homo%20sapiens%22&facet.field=source&facet.field=taxon_subset_closure_label&facet.field=type&facet.field=panther_family_label&facet.field=annotation_class_list_label&facet.field=regulates_closure_label&q=*:*")
+  genes <- suppressMessages(fread(url, header = FALSE, verbose=FALSE))
+  return(genes$V3)
+}
+
+testGO <- function(term, mart) {
+  genes <- getGoGenes(term, mart)
+  ensembl <- getBM(attributes=c('hgnc_symbol', 'ensembl_gene_id'),
+        filters = 'hgnc_symbol', 
+        values = genes, 
+        mart = mart)[,2] %>% unique
+
+  test0 <- rna$fit[, table(P.Value < 0.05, ENSEMBL %in% ensembl)] %>%
+    fisher.test
+
+  test1 <- rna$fit[, .(abs(logFC), ENSEMBL %in% ensembl)] %>%
+  .[, t.test(V1 ~ V2)]
+
+  test2 <- rna$fit[, .(-log(P.Value), ENSEMBL %in% ensembl)] %>%
+  .[, t.test(V1 ~ V2)]
+
+  return(list(test0, test1, test2))
+}
+```
+
+Selective autophagy 
+
+```{r, include=TRUE}
+testGO(term = "GO:0061912", mart = mymart) # lower absolute fold change
+```
+
+Macroautophagy
+
+```{r, include=TRUE}
+testGO("GO:0016236", mymart) # lower P values!
+```
+
+Lysosomes
+
+```{r, include=TRUE}
+testGO("GO:0005764", mymart)
+```
+
+Chaperone-mediated autophagy
+
+```{r, include=TRUE}
+testGO("GO:0061684", mymart) # Higher FC, but not more significant
+```
+
+Autophagy
+
+```{r, include=TRUE}
+testGO("GO:0006914", mymart) # Lower P values
+```
+
+
+
+# Overlap of targeted DMC genes and DEGs
+
+```{r}
+
+# So if I take those autophagy genes that have DMCs, would they have higher
+# DE?
+
+mylist <- meth$fit[, sum(adj.P.Val < 0.05, na.rm=TRUE), Gene] %>% .[V1 > 0, Gene]
+rna$fit[, list(abs(logFC), SYMBOL %in% mylist)] %>%
+  .[, t.test(V1 ~ V2)]
+
+mylist <- meth$fit[, .(Count=sum(adj.P.Val < 0.05, na.rm=TRUE)), .(SYMBOL=Gene)]
+merge(rna$fit, mylist, by = 'SYMBOL', all=FALSE) %>%
+  .[, lm(abs(logFC) ~ Count)] %>% 
+  summary
+merge(rna$fit, mylist, by = 'SYMBOL', all=FALSE) %>%
+  .[, lm(-log(P.Value) ~ Count)] %>% 
+  summary  
+
+
+# But if I do the same with fraction of significant loci per gene
+mylist <- meth$fit[, mean(adj.P.Val < 0.05, na.rm=TRUE), .(SYMBOL = Gene)]
+merge(rna$fit, mylist, by = 'SYMBOL', all=FALSE) %>%
+lm(abs(logFC) ~ V1, data = .) %>% 
+summary
+# > No relationship
+
+
+# Not normalized: So far, I see that autophagy pathway genes may have a stronger expression difference than the rest, 
+# but increased number of DMCs within 300kb actually reduces the changes.
+
+# Normalized: No relationship
+
+
+# To confirm that, I can compare absolute fold change at autophagy genes that have 0 DMCs
+targetList <- meth$fit[, unique(Gene)]
+mylist <- meth$fit[, .(Count=sum(adj.P.Val < 0.05, na.rm=TRUE)), .(SYMBOL=Gene)] %>%
+  .[Count == 0, SYMBOL]
+rna$fit[SYMBOL %in% targetList, list(abs(logFC), SYMBOL %in% mylist)] %>% 
+  .[, t.test(V1 ~ V2)]
+rna$fit[SYMBOL %in% targetList, list(-log(P.Value), SYMBOL %in% mylist)] %>%
+  .[, t.test(V1 ~ V2, alternative = "less")]
+
+# > Not normalized: Indeed. The p value is borderline but the difference of means is higher
+# > Normalized: No difference
+
+
+```
+
+# Overlap of genes with DMC in genic region and rna-seq
+
+Enrichment of autophagy genes with significant DMCs in their promoters
+
+```{r, include=TRUE, echo=TRUE}
+autophagyList <- meth$fit[, unique(Gene)]
+annot[grepl("hg19_genes_[1to5kb|promoters]", annot.type), sum(adj.P.Val < 0.05), annot.symbol] %>%
+  .[, table(annot.symbol %in% autophagyList, V1 > 0)] %>%
+  tee %>% fisher.test
+
+
+annot[grepl("hg19_genes_[1to5kb|promoters]", annot.type), sum(adj.P.Val < 0.05 & logFC > 0), annot.symbol] %>%
+  .[, table(annot.symbol %in% autophagyList, V1 > 0)] %>%
+  tee %>% fisher.test
+
+annot[grepl("hg19_genes_[1to5kb|promoters]", annot.type), sum(adj.P.Val < 0.05 & logFC < 0), annot.symbol] %>%
+  .[, table(annot.symbol %in% autophagyList, V1 > 0)] %>%
+  tee %>% fisher.test
+```
+
+
+Find the padlock target genes that have DMCs in promoters. Are they more likely to be DE than other genes? 
+
+
+```{r, include=TRUE, echo=TRUE}
+geneList <- annot[
+  grepl("hg19_genes_[1to5kb|promoters]", annot.type) & 
+    adj.P.Val < 0.05 &
+    annot.symbol %in% meth$fit[, unique(Gene)],
+  unique(annot.symbol)
+]
+length(geneList)
+
+
+rna$fit[, table(SYMBOL %in% geneList, adj.P.Val < 0.2)] %>%
+  tee %>%
+  fisher.test
+
+rna$fit[SYMBOL %in% meth$fit[, unique(Gene)], table(SYMBOL %in% geneList, adj.P.Val < 0.2)] %>%
+  tee %>%
+  fisher.test
+```
+
+Are the DE genes with DMC in their promoter more likely to belong to any of the autophagy processes?
+
+```{r}
+genesWithDMCinPromoter <- annot[
+  grepl("hg19_genes_[1to5kb|promoters]", annot.type) & 
+    adj.P.Val < 0.2 &
+    annot.symbol %in% meth$fit[, unique(Gene)],
+  unique(annot.symbol)
+]
+genesPadlockTarget <- meth$fit[, unique(Gene)]
+genesDE <- rna$fit[adj.P.Val < 0.2, SYMBOL] %>% unique
+foo <- function(term) {
+  rna$fit[SYMBOL %in% genesPadlockTarget, 
+    table(SYMBOL %in% intersect(genesWithDMCinPromoter, genesDE), 
+          SYMBOL %in% getGoGenes(term, mymart))] %>% 
+  tee %>%
+  fisher.test
+
+}
+```
+
+Selective autophagy 
+
+```{r, include=TRUE}
+foo(term = "GO:0061912")
+```
+
+Macroautophagy
+
+```{r, include=TRUE}
+foo("GO:0016236")
+```
+
+Lysosomes
+
+```{r, include=TRUE}
+foo("GO:0005764")
+```
+
+Chaperone-mediated autophagy
+
+```{r, include=TRUE}
+foo("GO:0061684")
+```
+
+Autophagy
+
+```{r, include=TRUE}
+foo("GO:0006914")
+```
+
+
+# Fig 1 D
+
+Show how many genes in a pathway X have DMCs within 300kb (padlock target)
+
+```{r}
+pathways <- list(
+  list(term="GO:0061912", name="Selective autophagy"),
+  list(term="GO:0016236", name="Macroautophagy"),
+  list(term="GO:0005764", name="Lysosomes"),
+  list(term="GO:0061684", name="Chaperone-mediated autophagy"),
+  list(term="GO:0006914", name="Autophagy")
+  )
+
+pd <- foreach(p = pathways, .combine=rbind) %do% {
+  genes <- getGoGenes(p$term, mymart)
+  meth$fit[Gene %in% genes, sum(adj.P.Val < 0.05, na.rm=TRUE), Gene] %>%
+    .[, table(V1 > 0)] %>% as.data.table %>%
+    setnames(c("HasDMCs", "Count")) %>%
+    .[, Term := p$term] %>%
+    .[, Name := p$name]
+}
+
+pd[, list(Name, HasDMCs, Count, Fraction=Count / sum(Count)), list(Term)] %>%
+.[, LabelPos := ifelse(HasDMCs, 0.25, 0.75)] %>%
+.[, TermName := paste(Term, Name, sep=" ") %>% gsub(" ", "\n", .)] %>%
+ggplot(aes(TermName, Fraction, fill=HasDMCs)) + 
+geom_bar(stat="identity", position="stack") + 
+geom_text(aes(y = LabelPos, label = Count)) + 
+scale_y_continuous(labels = scales::percent)
+
+```
+
+How many genes in a pathway X have DMCs within their promoter?
+
+```{r}
+pd <- foreach(p = pathways, .combine=rbind) %do% {
+  genes <- getGoGenes(p$term, mymart)
+  annot[
+    grepl("hg19_genes_[promoters|1to5kb]", annot.type) & annot.symbol %in% genes,
+    sum(adj.P.Val < 0.05, na.rm=TRUE),
+    annot.symbol] %>%
+  .[, table(V1 > 0)] %>%
+  as.data.table %>%
+  setnames(c("HasDMCs", "Count")) %>%
+  .[, Term := p$term] %>%
+  .[, Name := p$name]  
+}
+
+pd[, list(Name, HasDMCs, Count, Fraction=Count / sum(Count)), list(Term)] %>%
+.[, LabelPos := ifelse(HasDMCs, 0.05, 0.75)] %>%
+.[, TermName := paste(Term, Name, sep=" ") %>% gsub(" ", "\n", .)] %>%
+ggplot(aes(TermName, Fraction, fill=HasDMCs)) + 
+geom_bar(stat="identity", position="stack") + 
+geom_text(aes(y = LabelPos, label = Count)) + 
+scale_y_continuous(labels = scales::percent)
+
+
+```
+
+# Fig 1 E
+
+Gene expression volcano with DE & AP genes labeled
+
+```{r}
+require(ggrepel)
+dmcs <- meth$fit[adj.P.Val < 0.05, unique(Gene)]
+prom <- annot[
+  grepl("hg19_genes_[promoters|1to5kb]", annot.type) & adj.P.Val < 0.05,
+  unique(annot.symbol)]
+rna$fit[, TargetDMC := adj.P.Val < 0.05 & SYMBOL %in% dmcs]
+rna$fit[, PromDMC := adj.P.Val < 0.05 & SYMBOL %in% prom]
+
+ggplot(rna$fit, aes(logFC, -log10(P.Value), color = adj.P.Val < 0.05)) + 
+  geom_point() + 
+  geom_point(data = rna$fit[TargetDMC == TRUE], color = "orange", size = 2) + 
+  geom_label_repel(data = rna$fit[TargetDMC == TRUE], aes(label=SYMBOL))
+```
+
+# Enrichment of upregulation within pathways
+
+```{r}
+pd <- foreach(p = pathways, .combine=rbind) %do% {
+  genes <- getGoGenes(p$term, mymart)
+  rna$fit[, table(SYMBOL %in% genes, -1 * sign(logFC))] %>%
+  tee %>% 
+  fisher.test %>%
+  broom::tidy() %>%
+  setDT %>%
+  .[, Term := p$term] %>%
+  .[, Name := p$name]
+}
+
+ggplot(pd, aes(log10(estimate), Term, shape = p.value < 0.05)) + 
+geom_point()
+```
+
+
+
+

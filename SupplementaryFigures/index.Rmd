@@ -1,0 +1,32 @@
+---
+title: "Supplementary Figures"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+
+```{r, echo = FALSE, include = FALSE}
+source("../code/common.R")
+```
+
+
+# Mice 
+
+```{r, include=TRUE, fig.cap="Manhattan plot for wild type vs A30P mice"}
+knitr::include_graphics("../Mice_DSS_Padlock/index_files/figure-html/unnamed-chunk-31-4.png")
+```
+
+```{r, include=TRUE, fig.cap="Manhattan plot for CP (rAAV-syn) - control (rAAV-GFP)"}
+knitr::include_graphics("../Mice_CecalPatch_Padlock/index_files/figure-html/unnamed-chunk-31-1.png")
+```
+
+

@@ -1,0 +1,17 @@
+---
+title: "Main page"
+output: 
+  html_document:
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+
+```{r, include=FALSE}
+source("../code/common.R")
+```
+
+
+

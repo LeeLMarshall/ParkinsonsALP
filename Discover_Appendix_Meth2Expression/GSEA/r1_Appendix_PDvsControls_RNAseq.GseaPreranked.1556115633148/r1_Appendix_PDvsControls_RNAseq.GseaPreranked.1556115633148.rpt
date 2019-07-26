@@ -1,0 +1,20 @@
+producer_class	xtools.gsea.GseaPreranked
+producer_timestamp	1556115633148
+param	scoring_scheme	classic
+param	norm	meandiv
+param	make_sets	true
+param	gui	false
+param	set_max	200
+param	rnd_seed	timestamp
+param	rpt_label	r1_Appendix_PDvsControls_RNAseq
+param	gmx	../etc/Human_GOBP_AllPathways_no_GO_iea_November_01_2017_symbol.gmt
+param	out	/scratch/juozas/VAI/PD2018/Discover_Appendix_Meth2Expression/GSEA
+param	help	false
+param	zip_report	false
+param	create_svgs	false
+param	set_min	10
+param	nperm	1000
+param	rnk	/scratch/juozas/VAI/PD2018/Discover_Appendix_Meth2Expression/rank_df.rnk
+param	plot_top_x	20
+
+file	GSEA/r1_Appendix_PDvsControls_RNAseq.GseaPreranked.1556115633148/index.html

@@ -1,0 +1,379 @@
+---
+title: "Overlap of Appendix and Mice"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R")
+
+# gene mapping
+gmap <- fread("../etc/padlock_genes_human2mouse.csv") %>%
+  select(V1, V2)
+gmap[1, ] %>% as.character %>% setnames(gmap, .)
+gmap <- gmap[-1,]
+
+gmap[, length(unique(MGI_mm10))]
+gmap[, length(unique(HGNC_hg19))]
+
+# Load mice DSS fits
+dss <- fread(Sys.glob("../Mice_DSS_Padlock/www/m6_*.csv"))
+
+# Load CP fits
+cp <- fread(Sys.glob("../Mice_CecalPatch_Padlock/www/m6_*.csv"))
+
+
+myFisherTest <- function(t) {
+  tryCatch({
+    f <- fisher.test(t)
+    data.table(estimate = f$estimate, p.value = f$p.value)
+  }, error = function(e) {
+    message(e)
+    data.table(estimate = NA, P = NA)
+  })
+}
+
+
+# genomic annotations
+p_load("annotatr")
+foo <- function() {
+  require(annotatr)
+  genome <- "mm10"
+  annots <- c('mm10_cpgs', 'mm10_basicgenes', 'mm10_genes_intergenic')
+  annotations_mm10 <- build_annotations(genome = genome, annotations = annots)
+
+  genome <- "hg19"
+  annots <- c('hg19_cpgs', 'hg19_basicgenes', 'hg19_genes_intergenic')
+  annotations_hg19 <- build_annotations(genome = genome, annotations = annots)
+  return(list(mm10=annotations_mm10, hg19=annotations_hg19))  
+}
+
+g(annotations_mm10, annotations_hg19) %=% cache(
+  foo = foo, fname = "annotations.RDS", verbose=TRUE
+  )
+
+# readers
+readAppendix = function(prefix) { 
+  fread(glue("../Appendix_PDvsControls_Padlock/www/{prefix}_Appendix_PDvsControls_Padlock.csv")) %>% 
+  .[, list(ID, Gene, Chr, SNP, logFC, P.Value, adj.P.Val)]
+}
+readMice = function(prefix, contrast) {
+  require(glue)
+  x <- fread(glue("../Mice_DSS_Padlock/www/{prefix}_Mice_DSS_Padlock.csv"))
+  x[, list(ID, Chr, SNP, Gene, logFC = get(glue("C.{contrast}")), 
+    P.Value = get(glue("P.{contrast}")),
+    adj.P.Val = p.adjust(get(glue("P.{contrast}")), "fdr"))] 
+}
+readCecalPatch <- function(prefix) {
+  require(glue)
+  x <- fread(glue("../Mice_CecalPatch_Padlock/www/{prefix}_Mice_CecalPatch_Padlock.csv")) %>%
+    .[, list(ID, Gene, Chr, SNP, logFC, P.Value, adj.P.Val)]
+}
+
+
+# Enrichment of genes with significant loci
+# dt must have Gene and Significant fields
+computeORs <- function(dt) {
+  dt <- 
+    foreach (gene = unique(dt$Gene), .combine = rbind) %dopar% {
+      require(data.table)
+      tryCatch({
+        t <- dt[, table(Gene == gene, Significant == TRUE)]
+        f <- fisher.test(t)
+        data.table(OR = f$estimate, P = f$p.value, Gene = gene)    
+      }, error = function(e) {
+        message(e)
+        data.table(OR = NA, P = NA, Gene = gene)
+      })
+    }
+  dt
+}
+
+
+CLUSTER <<- makeMyCluster(nNodes = 10)
+```
+
+
+# Overlap of Mice DSS contrasts
+
+```{r}
+prefix <- "m6"
+myContrasts <- c(
+  "GTwt_DSS - GTwt_Water",
+  "GTtg_DSS - GTwt_Water",
+  "GTtg_DSS - GTtg_Water",
+  "GTtg_Water - GTwt_Water",
+  "(GTwt_DSS - GTwt_Water) - (GTtg_DSS - GTtg_Water)")
+
+data <- foreach(contrast = myContrasts) %do% {
+  readMice(prefix, contrast)
+}
+names(data) <- myContrasts
+
+
+# Compare loci in all pairwise contrasts
+qT <- 0.05
+n <- length(myContrasts)
+dt <- 
+  foreach(i = 1:(n-1), .combine=rbind) %:% 
+  foreach(j = (i+1):n, .combine=rbind) %do% {
+    if (i == j) break;
+    contA <- myContrasts[i]
+    contB <- myContrasts[j]
+    stopifnot(all(c("ID", "Gene", "Chr", "SNP") %in% colnames(data[[contA]])))
+    stopifnot(all(c("ID", "Gene", "Chr", "SNP") %in% colnames(data[[contB]])))
+    dt <- merge(data[[contA]], data[[contB]], by = c("ID", "Gene", "Chr", "SNP"))  
+    dt[, table(adj.P.Val.x < qT, adj.P.Val.y < qT)] %>%
+      myFisherTest %>%
+      .[, ContrastA := contA] %>%
+      .[, ContrastB := contB]
+  }
+dt[, Star := gtools::stars.pval(p.value)]
+```
+
+Test overlap of significant loci using Fisher's test. Threshold q at 0.05.
+
+```{r, include=TRUE}
+dt[, list(ContrastA, ContrastB, estimate, p.value, Star)] %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r}
+
+oddsRatios <- foreach(contrast = myContrasts) %do% {
+  computeORs( data[[contrast]][, list(Gene, Significant = adj.P.Val < qT)])
+}
+names(oddsRatios) <- myContrasts
+
+dt <- 
+  foreach(i = 1:(n-1), .combine=rbind) %:% 
+  foreach(j = (i+1):n, .combine=rbind) %do% {
+    if (i == j) break;
+    contA <- myContrasts[i]
+    contB <- myContrasts[j]
+
+    merge(oddsRatios[[contA]], oddsRatios[[contB]], by = "Gene") %>%
+      .[OR.x > 0 & OR.y > 0] %>%
+      lm( log(OR.x) ~ 0 + log(OR.y), data = .) %>% 
+      summary %>%
+      broom::tidy() %>%
+      dplyr::select(estimate, p.value) %>%
+      setDT %>%
+      .[, ContrastA := contA] %>%
+      .[, ContrastB := contB]
+  }
+dt[, Q := p.adjust(p.value, "fdr")]
+dt[, Star := gtools::stars.pval(p.value)]
+```
+
+Threshold at q < 0.05 and count enrichment of gene with DMCs (OR). Test the correlation of odds ratios.
+
+```{r, include=TRUE}
+dt[, list(ContrastA, ContrastB, estimate, p.value, Q, Star)] %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+# Overlap of DSS and CecalPatch
+
+```{r}
+Mcp <- readCecalPatch(prefix)
+
+qT <- 0.05
+n <- length(myContrasts)
+dt <- 
+  foreach(i = 1:(n), .combine=rbind) %do% {
+    contA <- myContrasts[i]
+    dt <- merge(Mcp, data[[contA]], by = c("ID", "Gene", "Chr", "SNP"))  
+    dt[, table(adj.P.Val.x < qT, adj.P.Val.y < qT)] %>%
+      myFisherTest %>%
+      .[, Contrast := contA] 
+  }
+dt[, Star := gtools::stars.pval(p.value)]
+
+```
+
+Test overlap of significant loci using Fisher's test. Threshold q at 0.05.
+
+```{r, include=TRUE}
+dt[, list(Contrast, estimate, p.value, Star)] %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+```{r}
+McpORs <- computeORs( Mcp[, list(Gene, Significant = adj.P.Val < qT)])
+dt <- 
+  foreach(i = 1:n, .combine=rbind) %do% {
+    contA <- myContrasts[i]
+
+    merge(McpORs, oddsRatios[[contA]], by = "Gene") %>%
+      .[OR.x > 0 & OR.y > 0] %>%
+      lm( log(OR.x) ~ 0 + log(OR.y), data = .) %>% 
+      summary %>%
+      broom::tidy() %>%
+      dplyr::select(estimate, p.value) %>%
+      setDT %>%
+      .[, Contrast := contA]
+  }
+dt[, Q := p.adjust(p.value, "fdr")]
+dt[, Star := gtools::stars.pval(p.value)]
+
+fwrite(dt, file = "ORs_CecalPatch_DSS.csv")
+```
+
+
+Threshold at q < 0.05 and count enrichment of gene with DMCs (OR). Test the correlation of odds ratios.
+
+```{r, include=TRUE}
+dt[, list(Contrast, estimate, p.value, Q, Star)] %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+# Enrichment of pathways
+
+
+```{r}
+
+# See if any of the autophagy pathways is enriched
+getGOGenes <- function(term) {
+  require(glue)
+  url <- "http://www.informatics.jax.org/go/report.txt?goID={term}&results=1000&startIndex=0&sort=term&dir="
+  x <- fread(glue(url))
+  x <- x[,2, with=FALSE]
+  setnames(x, "Gene")
+  unique(x$Gene)
+}
+
+
+pathways <- list(
+  list(term="GO:0061912", name="Selective autophagy"),
+  list(term="GO:0016236", name="Macroautophagy"),
+  list(term="GO:0005764", name="Lysosomes"),
+  list(term="GO:0061684", name="Chaperone-mediated autophagy"),
+  list(term="GO:0006914", name="Autophagy")
+  # list(term="GO:0016237", name="Microautophagy"),
+  # list(term="GO:0000423", name="Mitophagy")
+  )
+
+pathways <- foreach(p = pathways) %do% {
+  p$genes <- getGOGenes(p$term)
+  p
+}
+lapply(pathways, `[[`, 3) %>% sapply(length)
+
+# How did we compute enrichment in figure 1?
+contrasts <- colnames(dss)
+contrasts <- contrasts[grepl("P\\.", contrasts)]
+contrasts <- contrasts[1:5]
+pd <- 
+  foreach(p = pathways, .combine = rbind) %:%
+  foreach(c = contrasts, .combine = rbind) %do%
+  {
+    genes <- p$genes
+    dt <- dss[, list(Gene, P=p.adjust(get(c), "fdr"))]
+    res1 <- dt[, table( P < 0.05, Gene %in% genes)] %>% 
+            fisher.test %>%
+            broom::tidy() %>%
+            dplyr::select(estimate, p.value) %>%
+            setDT %>%
+            .[, Term := p$term] %>%
+            .[, Name := p$name] %>%
+            .[, Contrast := c] %>%
+            .[, Type := "Target"]
+    res1
+  }
+
+pd2 <- foreach(p = pathways, .combine = rbind) %do% {
+    genes <- p$genes
+    dt <- cp[, list(Gene, P=adj.P.Val)]
+    res1 <- dt[, table( P < 0.05, Gene %in% genes)] %>% 
+            fisher.test %>%
+            broom::tidy() %>%
+            dplyr::select(estimate, p.value) %>%
+            setDT %>%
+            .[, Term := p$term] %>%
+            .[, Name := p$name] %>%
+            .[, Contrast := "Cecal Patch"] %>%
+            .[, Type := "Target"]
+    res1
+  }
+
+pd <- rbind(pd, pd2)
+pd[, Q := p.adjust(p.value, "fdr")]
+```
+
+```{r, include=TRUE}
+pd[order(p.value)]
+```
+
+# Overlap of Appendix and Mice datasets
+
+
+```{r}
+# read appendix
+apx <- readAppendix(prefix)
+
+# compute odds ratios 
+apxORs <- computeORs(apx[, list(Gene, Significant = adj.P.Val < qT)])
+apxORs <- merge(apxORs, gmap, by.x = "Gene", by.y = "HGNC_hg19")
+apxORs <- apxORs[, list(OR, P, Gene = MGI_mm10)]
+apxORs <- apxORs[!duplicated(Gene)]
+
+# Correlate to mice DSS
+dt <- 
+  foreach(i = 1:n, .combine=rbind) %do% {
+    contA <- myContrasts[i]
+    merge(apxORs, oddsRatios[[contA]], by = "Gene") %>%
+      .[OR.x > 0 & OR.y > 0] %>%
+      lm( log(OR.x) ~ 0 + log(OR.y), data = .) %>% 
+      summary %>%
+      broom::tidy() %>%
+      dplyr::select(estimate, p.value) %>%
+      setDT %>%
+      .[, Contrast := contA]
+  }
+
+# Corerlate to mice CP
+dt2 <- 
+  merge(apxORs, McpORs, by = "Gene") %>%
+    .[OR.x > 0 & OR.y > 0] %>%
+    lm( log(OR.x) ~ 0 + log(OR.y), data = .) %>% 
+    summary %>%
+    broom::tidy() %>%
+    dplyr::select(estimate, p.value) %>%
+    setDT %>%
+    .[, Contrast := "Cecal Patch"] %>%
+    .[]
+
+
+dt <- rbind(dt, dt2)
+rm(dt2)
+dt[, Q := p.adjust(p.value, "fdr")]
+dt[, Star := gtools::stars.pval(p.value)]
+
+fwrite(dt, file = "ORs_Appendix_Mice.csv")
+```
+
+Threshold at q < 0.05 and count enrichment of gene with DMCs (OR). Test the correlation of odds ratios.
+
+```{r, include=TRUE}
+dt[, list(Contrast, estimate, p.value, Q, Star)] %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+

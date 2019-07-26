@@ -1,0 +1,145 @@
+[
+	{
+		"title": "Appendix",
+		"children": [
+			{
+				"title":"PD vs Controls (padlock)",
+				"url": "../Appendix_PDvsControls_Padlock/"
+			},
+			{
+				"title":"PD vs Controls (RNA-seq)",
+				"url":"../Appendix_PDvsControls_RNAseq/"
+			},
+			{
+				"title":"Age*Diagnosis (padlock)",
+				"url":"../Appendix_AgeAcceleration_Padlock/"
+			},
+			{
+				"title":"Age*Diagnosis (RNAseq)",
+				"url":"../Appendix_AgeAcceleration_RNAseq/"				
+			}
+		]
+	},
+	{
+		"title": "Mice",
+		"children": [
+			{
+				"title": "Cecal Patch (padlock)",
+				"url": "../Mice_CecalPatch_Padlock/"
+			},
+			{
+				"title": "DSS (padlock)",
+				"url": "../Mice_DSS_Padlock/"
+			}			
+		]
+	},
+	{
+		"title":"Brain",
+		"children": [
+			{
+				"title": "PFC II (padlock) CG only",
+				"url": "../Brain_PFC_Padlock_CGonly/"
+			},			
+			{
+		 	 	"title": "PFC (large) + GLU (padlock)",
+				"url": "../Brain_PFCRep_Padlock_withGLU/"
+			},
+			{
+		 	 	"title": "PFC (large) + GLU Stage-wise (padlock)",
+				"url": "../Brain_PFCRep_Padlock_withGLU_Braak/"
+			},
+			{
+				"title": "OFB (padlock) CG only",
+				"url": "../Brain_OFB_Padlock_CGonly/"
+			},
+			{
+				"title": "Age*Diagnosis in PFC (large) (padlock)",
+				"url": "../Brain_AgeAcceleration_Padlock/"
+			},
+			{
+				"title": "PFC (hMeDIP)",
+				"url": "../Brain_PFC_hMeDIPseq/"				
+			}
+	]
+	},
+	{
+		"title":"Discover",
+		"children": [
+			{
+				"title":"Appendix Methylation vs Expression",
+				"url":"../Discover_Appendix_Meth2Expression/"
+			},
+			{
+				"title":"Overlap Appendix & Mice",
+				"url":"../Discover_OverlapAppendixMice/"
+			},
+			{
+				"title":"Overlap Appendix & Brain",
+				"url":"../Discover_OverlapAppendixBrain/"
+			},
+			{
+				"title":"Genomic enrichment",
+				"url":"../Discover_GenomicEnrichment/"
+			},
+			{
+				"title":"Aging and Disease Interaction",
+				"url":"../Discover_Aging/"
+			}
+
+		]
+	},
+	{
+		"title":"Figures",
+		"children": [
+			{
+				"title":"Figure 1",
+				"url":"../Figure1/"
+			},
+			{
+				"title":"Figure 2",
+				"url":"../Figure2/"
+			},
+			{
+				"title":"Figure 3",
+				"url":"../Figure3/"
+			},
+			{
+				"title":"Figure 4",
+				"url":"../Figure4/"
+			},
+			{
+				"title":"Figure 5",
+				"url":"../Figure5/"
+			}
+		]
+	},
+	{
+		"title":"Results",
+		"children":[
+			{
+				"title":"Appendix",
+				"url":"../Results_Appendix/"
+			},
+			{
+				"title":"Brain",
+				"url":"../Results_Brain/"
+			},
+			{
+			"title":"Proteomics",
+				"url":"../Results_Proteomics/"
+			},
+			{
+				"title":"Aging",
+				"url":"../Results_Aging/"
+			},
+			{
+				"title":"Mice",
+				"url":"../Results_Mice/"
+			},
+			{
+				"title":"etc",
+				"url":"../Results_etc/"
+			}
+		]
+	}
+]

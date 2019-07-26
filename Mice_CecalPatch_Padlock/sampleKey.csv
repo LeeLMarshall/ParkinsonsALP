@@ -1,0 +1,51 @@
+ID	Cohort	MouseNo	Sex	Genotype	Treatment
+A1	RED	139	m	tg	Water
+A2	RED	140	m	tg	Water
+A3	RED	141	m	wt	Water
+A4	RED	142	m	wt	Water
+A5	RED	143	m	wt	Water
+A6	RED	144	m	tg	Water
+A7	RED	145	m	wt	DSS
+A8	RED	146	m	tg	Water
+A9	RED	147	m	wt	DSS
+A10	RED	148	m	wt	DSS
+A11	RED	149	m	tg	Water
+A12	RED	151	f	tg	Water
+B1	RED	153	f	wt	Water
+B2	RED	154	m	tg	DSS
+B3	RED	156	m	wt	DSS
+B4	RED	157	m	wt	DSS
+B5	RED	158	m	wt	Water
+B6	RED	159	m	wt	Water
+B7	RED	160	m	wt	Water
+B8	RED	161	m	tg	DSS
+B9	RED	162	f	tg	Water
+B10	RED	168	f	wt	Water
+B11	RED	169	f	wt	DSS
+B12	RED	170	f	tg	DSS
+C1	RED	171	f	tg	DSS
+C2	RED	172	f	wt	DSS
+C3	RED	173	f	wt	DSS
+C4	RED	174	f	wt	Water
+C5	RED	175	f	tg	DSS
+C6	RED	176	f	wt	Water
+C7	RED	177	f	wt	Water
+C8	RED	178	f	tg	Water
+C9	RED	185	f	tg	Water
+C10	RED	187	f	tg	Water
+C11	RED	189	f	wt	DSS
+C12	RED	191	f	wt	DSS
+D1	RED	198	m	tg	DSS
+D2	RED	201	m	tg	DSS
+D3	RED	203	f	tg	DSS
+D4	RED	205	f	tg	DSS
+D5	cecal patch	18C_11	m	wt	GFP
+D6	cecal patch	18C_12	m	wt	GFP
+D7	cecal patch	18C_15	m	wt	a-syn
+D8	cecal patch	18C_19	m	wt	a-syn
+D9	cecal patch	18C_20	m	wt	GFP
+D10	cecal patch	18C_21	m	wt	GFP
+D11	cecal patch	18C_22	m	wt	a-syn
+D12	cecal patch	18c_26	m	wt	a-syn
+E1	cecal patch	18c_28	m	wt	GFP
+E2	cecal patch	18c_30	m	wt	a-syn

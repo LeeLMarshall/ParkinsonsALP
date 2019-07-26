@@ -1,0 +1,371 @@
+---
+title: "Aging and Disease Interaction"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+
+
+```{r, include=FALSE, echo=FALSE}
+source("../code/common.R", chdir=TRUE)
+p_load(broom)
+
+computeORs <- function(dt) {
+  dt <- 
+    foreach (gene = unique(dt$Gene), .combine = rbind) %dopar% {
+      require(data.table)
+      tryCatch({
+        t <- dt[, table(Gene == gene, Significant == TRUE)]
+        f <- fisher.test(t)
+        data.table(OR = f$estimate, P = f$p.value, Gene = gene)    
+      }, error = function(e) {
+        message(e)
+        data.table(OR = NA, P = NA, Gene = gene)
+      })
+    }
+  dt
+}
+
+
+CLUSTER <<- makeMyCluster(nNodes = 10)
+
+
+# Load Age*Diagnosis fits
+apxAg <- fread("../Appendix_AgeAcceleration_Padlock/www/m6_Appendix_AgeAcceleration_Padlock.csv")
+apxPD <- fread("../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv")
+pfcAg <- fread("../Brain_AgeAcceleration_Padlock/www/m6_Brain_AgeAcceleration_Padlock.csv")
+pfcPD <- fread("../Brain_PFCRep_Padlock_withGLU/www/m6_Brain_PFCRep_Padlock_withGLU.csv")
+```
+
+# Enrichment of pathways
+
+
+```{r}
+# Last chance, enrichment of pathways
+getGoGenes <- function(term) {
+  url <- glue("http://golr-aux.geneontology.io/solr/select?defType=edismax&qt=standard&indent=on&wt=csv&rows=100000&start=0&fl=bioentity_name,bioentity,bioentity_label&facet=true&facet.mincount=1&facet.sort=count&json.nl=arrarr&facet.limit=25&hl=true&hl.simple.pre=%3Cem%20class=%22hilite%22%3E&hl.snippets=1000&csv.encapsulator=&csv.separator=%09&csv.header=false&csv.mv.separator=%7C&fq=regulates_closure:%22{term}%22&fq=document_category:%22bioentity%22&fq=taxon_subset_closure_label:%22Homo%20sapiens%22&facet.field=source&facet.field=taxon_subset_closure_label&facet.field=type&facet.field=panther_family_label&facet.field=annotation_class_list_label&facet.field=regulates_closure_label&q=*:*")
+  genes <- fread(url, header = FALSE)
+  return(genes$V3)
+}
+
+pathways <- list(
+  list(term="GO:0061912", name="Selective autophagy"),
+  list(term="GO:0016236", name="Macroautophagy"),
+  list(term="GO:0005764", name="Lysosomes"),
+  list(term="GO:0061684", name="Chaperone-mediated autophagy"),
+  list(term="GO:0006914", name="Autophagy")
+  # list(term="GO:0016237", name="Microautophagy"),
+  # list(term="GO:0000423", name="Mitophagy")
+  )
+
+pathways <- foreach(p = pathways) %do% {
+  p$genes <- getGoGenes(p$term)
+  p
+}
+
+lapply(pathways, `[[`, 3) %>% sapply(length)
+```
+
+## In Appendix
+
+```{r}
+# Which pathway has more than expected significant DMCs?
+
+pd <-
+  apxAg[, list(ID, Gene, C = C.DiagnosisControl.Age, 
+              P=P.DiagnosisControl.Age, 
+              Q = p.adjust(P.DiagnosisControl.Age, "fdr"))]
+# pd <-
+#   apxAg[, list(ID, Gene, C = C.DiagnosisPD.LBD.Age, 
+#               P=P.DiagnosisPD.LBD.Age, 
+#               Q = p.adjust(P.DiagnosisPD.LBD.Age, "fdr"))]
+
+res <- foreach( p = pathways, .combine = rbind) %do% {
+  message(p$name)
+  pd[, table(Gene %in% p$genes, Q < 0.05)] %>%
+  fisher.test %>%
+  broom::tidy() %>%
+  select(estimate, p.value) %>%
+  setDT %>% 
+  .[, Pathway := p$name]
+}
+```
+
+```{r, include=TRUE}
+res
+```
+
+## In PFC
+
+
+```{r}
+pd <- pfcAg[, list(ID, Gene, 
+              C = C.GroupCTRL.Age, 
+              P=P.GroupCTRL.Age, 
+              Q = p.adjust(P.GroupCTRL.Age, "fdr"))]
+
+res <- foreach( p = pathways, .combine = rbind) %do% {
+  message(p$name)
+  pd[, table(Gene %in% p$genes, Q < 0.05)] %>%
+  fisher.test %>%
+  broom::tidy() %>%
+  select(estimate, p.value) %>%
+  setDT %>% 
+  .[, Pathway := p$name]
+}
+```
+
+```{r, include=TRUE}
+res
+```
+
+
+# Aging hallmarks
+
+```{r}
+p_load("RobustRankAggreg")
+
+eApx <- 
+  apxAg[, list(ID, Gene, C = C.DiagnosisControl.Age, 
+              P=P.DiagnosisControl.Age, 
+              Q = p.adjust(P.DiagnosisControl.Age, "fdr"))] %>%
+  .[, list(Gene, Significant = Q < 0.05)] %>%
+  computeORs
+
+ePFC <- 
+  pfcAg[, list(ID, Gene, C = C.GroupCTRL.Age, 
+              P=P.GroupCTRL.Age, 
+              Q = p.adjust(P.GroupCTRL.Age, "fdr"))] %>%
+  .[, list(Gene, Significant = Q < 0.05)] %>%
+  computeORs
+
+hallmarks <- aggregateRanks(
+  list(
+    ePFC[order(P), Gene],
+    eApx[order(P), Gene]
+  )
+)
+
+X <- head(hallmarks, 10) %>% 
+  setDT %>% 
+  setnames(c("Gene", "Score"))
+pd <- merge(X, ePFC[, list(Gene, EPFC=-log10(P))], by = "Gene") %>%
+  merge(., eApx[, list(Gene, EAPX=-log10(P))], by = "Gene") %>%
+  .[order(Score)]
+pd[, Width := 1/(Score / sum(Score))]
+pd[, Width := Width / sum(Width)]
+pd[, sum(Width)]
+pd[, Start := cumsum(c(0, Width[-.N]))]
+pd[, End := cumsum(Width)]
+```
+
+```{r, include=TRUE}
+pd
+```
+
+# Correlation of aging and disease effects
+
+## In appendix
+
+Using q < 0.02 as significance threshold. 
+
+```{r}
+pd <- copy(apxAg)
+pd[, CTRL := p.adjust(P.DiagnosisControl.Age, "fdr") < 0.2]
+pd[, PD := p.adjust(P.DiagnosisPD.LBD.Age, "fdr") < 0.2]
+pd[, DiffA := p.adjust(`P.DiagnosisControl.Age - DiagnosisPD.LBD.Age`, "fdr") < 0.2]
+```
+
+Overlap of aging in controls and in PDs
+
+```{r, include=TRUE}
+pd[, table(CTRL, PD)] %>% tee %>% fisher.test()
+```
+
+Overlap of healthy aging and differentially aging loci:
+
+```{r, include=TRUE}
+pd[, table(CTRL, DiffA)] %>% tee %>% fisher.test
+```
+
+Overlap of PD aging and differentially aging loci:
+```{r, include=TRUE}
+pd[, table(PD, DiffA)] %>% tee %>% fisher.test
+```
+
+> Most of the loci did not age in healthy but started showing aging effects in PD
+
+
+Overlap of disease and aging loci
+
+```{r, echo = TRUE, include=TRUE}
+merge(
+  apxAg[, list(ID, C = C.DiagnosisControl.Age, 
+              P=P.DiagnosisControl.Age, 
+              Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+  apxPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  .[, table(Q < 0.2, adj.P.Val < 0.2)] %>%
+  tee %>% fisher.test()
+
+
+merge(
+  apxAg[, list(ID, C = C.DiagnosisPD.LBD.Age, 
+              P=P.DiagnosisPD.LBD.Age, 
+              Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+  apxPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  .[, table(Q < 0.2, adj.P.Val < 0.2)] %>%
+  tee %>% fisher.test()
+
+
+merge(
+  apxAg[, list(ID, C = `C.DiagnosisControl.Age - DiagnosisPD.LBD.Age`, 
+              P=`P.DiagnosisControl.Age - DiagnosisPD.LBD.Age`, 
+              Q = p.adjust(`P.DiagnosisControl.Age - DiagnosisPD.LBD.Age`, "fdr"))],
+  apxPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  .[, table(Q < 0.2, adj.P.Val < 0.2)] %>%
+  tee %>% fisher.test()
+
+```
+
+Disease effect size correlation with aging effect size
+
+```{r, echo = TRUE, include=TRUE}
+merge(
+  apxAg[, list(ID, C = C.DiagnosisControl.Age, 
+              P=P.DiagnosisControl.Age, 
+              Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+  apxPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  # .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, cor.test(abs(C), abs(logFC), use='p')]
+
+merge(
+  apxAg[, list(ID, C = C.DiagnosisPD.LBD.Age, 
+              P=P.DiagnosisPD.LBD.Age, 
+              Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+  apxPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  # .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, cor.test(abs(C), abs(logFC), use='p')]
+
+merge(
+  apxAg[, list(ID, C = `C.DiagnosisControl.Age - DiagnosisPD.LBD.Age`, 
+              P=`P.DiagnosisControl.Age - DiagnosisPD.LBD.Age`, 
+              Q = p.adjust(`P.DiagnosisControl.Age - DiagnosisPD.LBD.Age`, "fdr"))],
+  apxPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  # .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, cor.test(abs(C), abs(logFC), use='p')]
+
+```
+
+## In PFC brain
+
+Using q < 0.02 as significance threshold. 
+
+```{r}
+pd <- copy(pfcAg)
+pd[, CTRL := p.adjust(P.GroupCTRL.Age, "fdr") < 0.2]
+pd[, PD := p.adjust(P.GroupPD.Age, "fdr") < 0.2]
+pd[, DiffA := p.adjust(`P.GroupCTRL.Age - GroupPD.Age`, "fdr") < 0.2]
+```
+
+Overlap of aging in controls and in PDs
+
+```{r, include=TRUE}
+pd[, table(CTRL, PD)] %>% tee %>% fisher.test()
+```
+
+Overlap of healthy aging and differentially aging loci:
+
+```{r, include=TRUE}
+pd[, table(CTRL, DiffA)] %>% tee %>% fisher.test
+```
+
+Overlap of PD aging and differentially aging loci:
+```{r, include=TRUE}
+pd[, table(PD, DiffA)] %>% tee %>% fisher.test
+```
+
+> Most of the loci did not age in healthy but started showing aging effects in PD
+
+Overlap of disease and aging loci
+
+```{r, echo = TRUE, include=TRUE}
+merge(
+  pfcAg[, list(ID, C = C.GroupCTRL.Age, 
+              P=P.GroupCTRL.Age, 
+              Q = p.adjust(P.GroupCTRL.Age, "fdr"))],
+  pfcPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  .[, table(P < 0.05, adj.P.Val < 0.05)] %>%
+  tee %>% fisher.test()
+
+
+merge(
+  pfcAg[, list(ID, C = C.GroupPD.Age, 
+              P=P.GroupPD.Age, 
+              Q = p.adjust(P.GroupCTRL.Age, "fdr"))],
+  pfcPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  .[, table(P < 0.05, adj.P.Val < 0.05)] %>%
+  tee %>% fisher.test()
+
+
+merge(
+  pfcAg[, list(ID, C = `C.GroupCTRL.Age - GroupPD.Age`, 
+              P=`P.GroupCTRL.Age - GroupPD.Age`, 
+              Q = p.adjust(`P.GroupCTRL.Age - GroupPD.Age`, "fdr"))],
+  pfcPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  .[, table(P < 0.05, adj.P.Val < 0.05)] %>%
+  tee %>% fisher.test()
+
+```
+
+Disease effect size correlation with aging effect size
+
+```{r, echo = TRUE, include=TRUE}
+merge(
+  pfcAg[, list(ID, C = C.GroupCTRL.Age, 
+              P=P.GroupCTRL.Age, 
+              Q = p.adjust(P.GroupCTRL.Age, "fdr"))],
+  pfcPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  #.[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, cor.test( abs(C), abs(logFC), use='s')]
+
+merge(
+  pfcAg[, list(ID, C = C.GroupPD.Age, 
+              P=P.GroupPD.Age, 
+              Q = p.adjust(P.GroupPD.Age, "fdr"))],
+  pfcPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  # .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, cor.test(abs(C), abs(logFC), use='p')]
+
+merge(
+  pfcAg[, list(ID, C = `C.GroupCTRL.Age - GroupPD.Age`, 
+              P=`P.GroupCTRL.Age - GroupPD.Age`, 
+              Q = p.adjust(`P.GroupCTRL.Age - GroupPD.Age`, "fdr"))],
+  pfcPD[, list(ID, logFC, P.Value, adj.P.Val)],
+  by = "ID") %>%
+  # .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, cor.test(abs(C), abs(logFC), use='p')]
+
+```
+
+
+

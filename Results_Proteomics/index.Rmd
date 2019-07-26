@@ -1,0 +1,262 @@
+---
+title: "Results Proteomics"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r setup, include=FALSE}
+source("../code/common.R")
+```
+
+# Stats for Results Section
+
+```{r}
+
+# Load other appendix fits
+padlApx <- fread("../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv")
+rnasApx <- fread("../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv")
+padlPfc <- fread("../Brain_PFCRep_Padlock_withGLU/www/m6_Brain_PFCRep_Padlock_withGLU.csv")
+
+
+
+# Load the proteomics fits
+protApx <- fread("www/190319-Labrie-APP_Group1vs2_Quan.csv")
+protPfc <- fread("www/190319-Labrie-PFCX_Group1vs2_Quan.csv")
+
+
+# extract relevant data
+protApx[, Gene := Description %>% gsub("^.*GN=", "", .) %>% gsub(" PE.*$", "", .)]
+protPfc[, Gene := Description %>% gsub("^.*GN=", "", .) %>% gsub(" PE.*$", "", .)]
+protApx <- 
+  protApx[, list(
+    Accession, 
+    Gene, 
+    FC = `Abundance Ratio (log2): (2) / (1)`,
+    Q  = `Abundance Ratio Adj. P-Value: (2) / (1)`,
+    A1 = `Abundances (Normalized): F1: Sample, Group 1, 1, 1`,
+    A2 = `Abundances (Normalized): F2: Sample, Group 1, 1, 2`,
+    A3 = `Abundances (Normalized): F6: Sample, Group 1, 1, 3`,
+    A4 = `Abundances (Normalized): F3: Sample, Group 2, 2, 1`,
+    A5 = `Abundances (Normalized): F4: Sample, Group 2, 2, 2`,
+    A6 = `Abundances (Normalized): F5: Sample, Group 2, 2, 3`
+  )]
+protPfc <- 
+  protPfc[, list(
+    Accession, 
+    Gene, 
+    FC = `Abundance Ratio (log2): (2) / (1)`,
+    Q  = `Abundance Ratio Adj. P-Value: (2) / (1)`,
+    A1 = `Abundances (Normalized): F1: Sample, Group 1, 1, 1`,
+    A2 = `Abundances (Normalized): F2: Sample, Group 1, 1, 2`,
+    A3 = `Abundances (Normalized): F6: Sample, Group 1, 1, 3`,
+    A4 = `Abundances (Normalized): F3: Sample, Group 2, 2, 1`,
+    A5 = `Abundances (Normalized): F4: Sample, Group 2, 2, 2`,
+    A6 = `Abundances (Normalized): F5: Sample, Group 2, 2, 3`
+  )]
+
+# filter reliable readings
+isReliableReading <- function(gA, gB) {
+  sum(!is.na(gA)) >= 2 & sum(!is.na(gB)) >= 2
+}
+protApx[, Reliable := isReliableReading(c(A1, A2, A3), c(A4, A5, A6)), Accession]
+protPfc[, Reliable := isReliableReading(c(A1, A2, A3), c(A4, A5, A6)), Accession]
+
+genesFromALP <- padlPfc[, unique(Gene)]
+
+
+```
+
+```{r, include=TRUE}
+message("Number of proteins investigated: ", 
+  protApx[, .N], " in appendix and ",
+  protPfc[, .N], " in PFC.")
+```
+
+## Enrichment of directional change
+
+In appendix
+
+```{r, include=TRUE}
+protApx[Reliable == TRUE & FC != 0, table(abs(FC) > 0.2, -sign(FC))] %>% fisher.test()
+```
+
+In PFC
+
+```{r, include=TRUE}
+protPfc[Reliable == TRUE & FC != 0, table(abs(FC) > 0.2, -sign(FC))] %>% fisher.test()
+```
+
+
+## Enrichment within proteomics study
+
+Enrichment of ALP genes among proteomics findings. Using logFC threhsold 0.2.
+
+
+In appendix:
+
+```{r, include=TRUE}
+protApx[Reliable == TRUE, table(abs(FC) > 0.2, Gene %in% genesFromALP)] %>%
+tee %>%
+fisher.test()
+
+```
+
+In PFC:
+
+```{r, include=TRUE}
+protPfc[Reliable == TRUE, table(abs(FC) > 0.2, Gene %in% genesFromALP)] %>%
+tee %>%
+fisher.test()
+
+
+```
+
+Enrichment of ALP pathways among the proteomics findings
+
+```{r}
+getGoGenes <- function(term) {
+  url <- glue("http://golr-aux.geneontology.io/solr/select?defType=edismax&qt=standard&indent=on&wt=csv&rows=100000&start=0&fl=bioentity_name,bioentity,bioentity_label&facet=true&facet.mincount=1&facet.sort=count&json.nl=arrarr&facet.limit=25&hl=true&hl.simple.pre=%3Cem%20class=%22hilite%22%3E&hl.snippets=1000&csv.encapsulator=&csv.separator=%09&csv.header=false&csv.mv.separator=%7C&fq=regulates_closure:%22{term}%22&fq=document_category:%22bioentity%22&fq=taxon_subset_closure_label:%22Homo%20sapiens%22&facet.field=source&facet.field=taxon_subset_closure_label&facet.field=type&facet.field=panther_family_label&facet.field=annotation_class_list_label&facet.field=regulates_closure_label&q=*:*")
+  genes <- fread(url, header = FALSE)
+  return(genes$V3)
+}
+
+pathways <- list(
+  list(term="GO:0061912", name="Selective autophagy"),
+  list(term="GO:0016236", name="Macroautophagy"),
+  list(term="GO:0005764", name="Lysosomes"),
+  list(term="GO:0061684", name="Chaperone-mediated autophagy"),
+  list(term="GO:0006914", name="Autophagy")
+  # list(term="GO:0016237", name="Microautophagy"),
+  # list(term="GO:0000423", name="Mitophagy")
+  )
+
+pathways <- foreach(p = pathways) %do% {
+  p$genes <- getGoGenes(p$term)
+  p
+}
+
+pd <- foreach(p = pathways, .combine = rbind) %do% {
+  genes <- p$genes
+  resApx <- 
+    protApx[Reliable == TRUE, table(abs(FC) > 0.2, Gene %in% genes)] %>%
+    fisher.test()  %>%
+    broom::tidy() %>%
+    select(estimate, p.value) %>%
+    setDT() %>%
+    .[, Dataset := "Appendix"] %>%
+    .[, Pathway := p$name]
+  resPfc <- 
+    protPfc[Reliable == TRUE, table(abs(FC) > 0.2, Gene %in% genes)] %>%
+    fisher.test()  %>%
+    broom::tidy() %>%
+    select(estimate, p.value) %>%
+    setDT() %>%
+    .[, Dataset := "PFC"] %>%
+    .[, Pathway := p$name]
+  rbindlist(list(resApx, resPfc))
+}
+```
+
+```{r, include=TRUE}
+pd[order(Dataset)][p.value < 0.05]
+```
+
+
+
+## Overlap of Genes with DMCs and diff-proteins
+
+
+In appendix padlocks
+
+```{r, include=TRUE}
+padlApx[, sum(adj.P.Val < 0.05, na.rm=TRUE), Gene] %>%
+merge(., protApx[Reliable == TRUE, list(Accession, Gene, FC, Q)], by = "Gene") %>%
+.[, table(HasDMC = V1 > 0, IsProt = abs(FC) > 0.2)] %>%
+tee %>%
+fisher.test()
+```
+
+
+In appendix rnaseq
+
+```{r, include=TRUE}
+rnasApx[, list(adj.P.Val < 0.05), list(Gene = SYMBOL)] %>%
+merge(., protApx[Reliable == TRUE, list(Accession, Gene, FC, Q)], by = "Gene") %>%
+.[, table(IsDEG = V1 > 0, IsProt = abs(FC) > 0.2)] %>%
+tee %>%
+fisher.test()
+```
+
+In PFC 
+
+```{r, include=TRUE}
+padlPfc[, sum(adj.P.Val < 0.05, na.rm=TRUE), Gene] %>%
+merge(., protPfc[Reliable == TRUE, list(Accession, Gene, FC, Q)], by = "Gene") %>%
+.[, table(HasDMC = V1 > 0, IsProt = abs(FC) > 0.2)] %>%
+tee %>%
+fisher.test()
+
+```
+
+List the genes that are significant in both, proteomic and padlock appendix data. Also mark the ones that are present in PFC proteomics data
+
+
+```{r, include=TRUE}
+dt <-
+padlApx[, list(
+  NoDMCs = sum(adj.P.Val < 0.05, na.rm=TRUE),
+  NoDMCs_Hyper = sum(adj.P.Val < 0.05 & logFC > 0, na.rm=TRUE),
+  NoDMCs_Hypo  = sum(adj.P.Val < 0.05 & logFC < 0, na.rm=TRUE)),
+  Gene] %>%
+merge(., protApx[Reliable == TRUE, list(Accession, Gene, FC, Q)], by = "Gene") %>%
+.[NoDMCs > 0 & abs(FC) > 0.2]
+
+merge(dt, protPfc[Reliable == TRUE & abs(FC) > 0.2, list(Gene, FC, Q)], by = "Gene", all.x = TRUE)
+
+
+```
+
+
+Correlation of fold changes between appendix and pfc proteomics data. Then, take the 
+proteins of appendix that have at least one DMC in padlock study and match them to the 
+proteins in pfc. See what is the correlation of fold changes.
+
+```{r, include=TRUE}
+merge(
+  protApx[, list(Gene, FC)],
+  protPfc[, list(Gene, FC)],
+  by = "Gene") %>%
+.[, cor.test(FC.x, FC.y)]
+
+merge(dt, protPfc[Reliable == TRUE & abs(FC) > 0.2, list(Gene, FC, Q)], by = "Gene", all.x = TRUE) %>%
+.[, cor.test(FC.x, FC.y, use="p")]
+
+```
+
+
+# Supplementary figures
+
+# Supplementary tables
+
+```{r}
+url <- "./www/190319-Labrie-APP_Group1vs2_Quan.csv"
+stopifnot(file.exists(url))
+```
+
+- [Supp. table 8](`r url`) Proteomics appendix.
+
+```{r}
+url <- "./www/190319-Labrie-PFCX_Group1vs2_Quan.csv"
+stopifnot(file.exists(url))
+```
+
+- [Supp. table 9](`r url`) Proteomics PFC

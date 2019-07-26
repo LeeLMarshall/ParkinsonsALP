@@ -1,0 +1,73 @@
+# Additional stuff
+
+## Manhattan plot for sv=0
+
+```{r}
+
+foo <- function(...) {
+  withCluster(
+    getLimmaFit(...), 
+    nNodes = params$workers, outfile = "/dev/null")
+}
+
+fit0 <- cache(foo=foo, fname=glue("fit_limma_result_sv0.RDS"), verbose=TRUE, 
+      mvalues = mvalues, 
+      md = data$modelData, 
+      formula = params$model$formula,
+      formula0 = params$model$formula0, 
+      nsv = 0, 
+      iteration = 0)
+
+manual <- fread("../etc/mm10_padlock_manual.csv")
+manual[, Gene := strsplit(TargetID, split="_") %>% sapply(., `[[`, 1)]
+manual[, Chr := gsub(":.*$", "", TargetLocation)]
+manual[, Start := as.numeric(gsub("^chr.*:|-.*$", "", TargetLocation))]
+manual[, End := as.numeric(gsub("^chr.*-", "", TargetLocation))]
+manual[, Length := End - Start]
+setkey(manual, Chr, Start, End)
+
+fit0 <- merge(data$genome, fit0, by="ID") %>% 
+.[, Start := SNP] %>%
+.[, End := SNP]
+setkey(fit0, Chr, Start, End)  
+
+fit0 <- foverlaps(fit0, manual, type="within", mult="first")
+fit0$i.Start <- fit0$i.End <- fit0$Start <- fit0$End <- NULL
+
+rm(manual)
+```
+
+```{r}
+# touch()
+g(p1, p2) %=% cache(foo=manhattanPlot, fname="manhattan_sv0.RDS", verbose=FALSE, fit=fit0)
+p1 <- p1 + ylim(-30, 30)
+pdf("www/manhattan_sv0.pdf", width=7.2, height=7.2/2)
+ggarrange(p1, p2, labels=c("A", "B"), widths = c(3, 1))
+dev.off()
+
+```
+
+
+```{r, include=TRUE, fig.width=7.2, fig.height=7.2/2}
+p1 <- p1 +  
+  theme_bw(base_size=12) +
+  theme( 
+    legend.position="none",
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+
+p2 <- p2 + 
+  theme_bw(base_size=12) + 
+  theme( 
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+ggarrange(p1, p2, labels=c("A", "B"), widths = c(3, 1))
+```
+[PDF](www/manhattan_sv0.pdf)
+

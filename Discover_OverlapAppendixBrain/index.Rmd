@@ -1,0 +1,315 @@
+---
+title: "Overlap of Appendix and Brain"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R")
+
+getEnrichments <- function(
+  prefixes = c("m5", "m6", "m7", "m8", "m9"),
+  readAppendix = function(...) {},
+  readMice     = function(...) {}) 
+{
+  dt <- foreach( prefix = prefixes, .combine = rbind) %do% {
+    tryCatch({
+      app <- readAppendix(prefix)
+      mice <- readMice(prefix)
+
+      # Do we get the same significant genes?
+      A <- app[ , sum(adj.P.Val < 0.05, na.rm=TRUE), list(Gene=toupper(Gene))]
+      B <- mice[, sum(adj.P.Val < 0.05, na.rm=TRUE), list(Gene=toupper(Gene))]
+      tb <- merge(A, B, by="Gene") %>%
+            .[, table(V1.x > 0, V1.y > 0)] %>%
+            fisher.test
+      tb$method <- "Overlap of significant genes"
+      tb$version <- prefix
+      r1 <- broom::tidy(tb) %>%
+            tibble::add_column(version = prefix)
+
+
+
+      # Do the directions of modification in those genes match?
+      A <- app[ adj.P.Val < 0.05, list(MeanFC = mean(logFC)), list(Gene=toupper(Gene))]
+      B <- mice[ adj.P.Val < 0.05, list(MeanFC = mean(logFC)), list(Gene = toupper(Gene))]
+      tb <- merge(A, B, by="Gene") %>% 
+        .[, table(sign(MeanFC.x), sign(MeanFC.y))] %>% 
+        fisher.test
+      tb$method <- "Direction match"
+      tb$version <- prefix
+      r2 <- broom::tidy(tb) %>%
+            tibble::add_column(version = prefix)
+
+      rbind(r1, r2)
+    },
+    error = function(e) {
+      return(NULL)
+    })
+  }
+  dt %>% setDT %>% 
+    .[, Star := gtools::stars.pval(p.value)] %>%
+    .[order(method, version)] %>%
+    select(version, method, Star, estimate, p.value, conf.low, conf.high)
+}
+
+```
+
+# Overlap of padlock target genes
+
+Locus related to gene by padlock probe annotation
+
+## Appendix PD vs Controls {.tabset}
+
+### vs Brain PFC Replicate + GLU
+
+```{r, include=TRUE}
+getEnrichments(
+  readAppendix = function(prefix) { 
+    fread(glue("../Appendix_PDvsControls_Padlock/www/{prefix}_Appendix_PDvsControls_Padlock.csv"))
+  },
+  readMice = function(prefix) {
+    fread(glue("../Brain_PFCRep_Padlock_withGLU/www/{prefix}_Brain_PFCRep_Padlock_withGLU.csv"))
+  }
+) %>%  
+kable() %>%
+kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### vs Brain PFC CG only
+
+
+```{r, include=TRUE}
+getEnrichments(
+  readAppendix = function(prefix) { 
+    fread(glue("../Appendix_PDvsControls_Padlock/www/{prefix}_Appendix_PDvsControls_Padlock.csv"))
+  },
+  readMice = function(prefix) {
+    fread(glue("../Brain_PFC_Padlock_CGonly/www/{prefix}_Brain_PFC_Padlock_CGonly.csv"))
+  }
+) %>%  
+kable() %>%
+kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+### vs Brain OFB CG only
+
+
+```{r, include=TRUE}
+getEnrichments(
+  readAppendix = function(prefix) { 
+    fread(glue("../Appendix_PDvsControls_Padlock/www/{prefix}_Appendix_PDvsControls_Padlock.csv"))
+  },
+  readMice = function(prefix) {
+    fread(glue("../Brain_OFB_Padlock_CGonly/www/{prefix}_Brain_OFB_Padlock_CGonly.csv"))
+  }
+) %>%  
+kable() %>%
+kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+# Overlap of genes
+
+Locus related to gene by dependence to any of the genic elements of that gene.
+
+```{r}
+prefix <- "m6"
+qThresh <- 0.05
+```
+
+Using model version `r prefix` and q value threshold `r qThresh` in this section. 
+
+
+```{r}
+# Prepare annotations to save time
+p_load("annotatr")
+foo <- function() {
+  require(annotatr)
+  genome <- "mm10"
+  annots <- c('mm10_cpgs', 'mm10_basicgenes', 'mm10_genes_intergenic')
+  annotations_mm10 <- build_annotations(genome = genome, annotations = annots)
+
+  genome <- "hg19"
+  annots <- c('hg19_cpgs', 'hg19_basicgenes', 'hg19_genes_intergenic')
+  annotations_hg19 <- build_annotations(genome = genome, annotations = annots)
+  return(list(mm10=annotations_mm10, hg19=annotations_hg19))  
+}
+
+g(annotations_mm10, annotations_hg19) %=% cache(
+  foo = foo, fname = "annotations.RDS", verbose=TRUE
+  )
+
+myFisherTest <- function(t) {
+  require(data.table)
+  require(dplyr)
+  exp <- sum(t[2,])/sum(t)
+  obs <- t[2,2] / sum(t[,2])
+  f <- t %>% fisher.test
+  data.table(
+    `Expected, %` = exp,
+    `Obseverd, %` = obs,
+    OR            = f$estimate, 
+    Lo            = f$conf.int[1], 
+    Hi            = f$conf.int[2], 
+    P             = f$p.value,
+    `P < 0.05`    = gtools::stars.pval(f$p.value)
+  )
+}
+
+readAndAnnotate <- function(experiment, prefix, genome, contrast = NULL) {
+  require(GenomicRanges)
+  require(annotatr)
+  require(data.table)
+  fits <- fread(glue("../{experiment}/www/{prefix}_{experiment}.csv"))
+  if (!is.null(contrast)) {
+    ccol <- glue("C.{contrast}")
+    pcol <- glue("P.{contrast}")
+
+    fits <- fits[, 
+              list(
+                ID, Chr, SNP, str, Gene, 
+                logFC = get(ccol), 
+                P.Value = get(pcol),
+                adj.P.Val = adj.P.Val
+              )
+            ]        
+  }
+  fitsgr <- with(fits, GRanges(seqnames=Chr, IRanges(SNP, SNP)))
+  if (!is.null(fits$str))
+    strand(fitsgr) <- fits$str
+  values(fitsgr) <- fits[, list(ID, logFC, P.Value, adj.P.Val, Gene)]
+  if (genome == "hg19") {
+    annotations <- annotations_hg19
+  } else if (genome == "mm10") {
+    annotations <- annotations_mm10
+  } else {
+    stop("Unknown genome")
+  }
+
+  annot <- annotate_regions(
+    regions = fitsgr,
+    annotations = annotations,
+    ignore.strand = TRUE,
+    quiet = FALSE)
+  data.frame(annot) %>% setDT
+}
+
+getAnnotatrEnrichments <- function(  
+  prefix, 
+  experimentA, genomeA, 
+  experimentB, genomeB, 
+  qThresh = 0.05,
+  contrastA = NULL, contrastB = NULL)
+{
+
+  annA <- readAndAnnotate(experimentA, prefix, genomeA, contrastA)
+  annB <- readAndAnnotate(experimentB, prefix, genomeB, contrastB)
+  types <- c("introns", "5UTRs", "exons", "3UTRs", "intergenic", "1to5kb", "promoters" )
+
+  res <- foreach(t = types, .combine=rbind) %do% {
+    message(t)
+    # Note: P.Value < qThresh enables post-hoc filter in case of contrast
+    tryCatch({
+      A <- annA[annot.type == glue("{genomeA}_genes_{t}"), 
+        list(NSign = sum(adj.P.Val < qThresh & P.Value < qThresh)), 
+        list(Gene = toupper(annot.symbol))]
+
+      B <- annB[annot.type == glue("{genomeB}_genes_{t}"), 
+        list(NSign = sum(adj.P.Val < qThresh & P.Value < qThresh)), 
+        list(Gene = toupper(annot.symbol))]
+
+      myt <- merge(A, B, by="Gene") %>%
+        .[, table(NSign.x > 0, NSign.y > 0)]
+      myFisherTest(myt) %>% .[, Type := t]
+    }, error = function(e) {
+      message(glue("Error in {t}"))
+    })
+  }
+
+  tryCatch({
+    A <- annA[grepl("genes", annot.type), 
+      list(NSign = sum(adj.P.Val < qThresh & P.Value < qThresh)), 
+      list(Gene = toupper(annot.symbol))]
+
+    B <- annB[grepl("genes", annot.type), 
+      list(NSign = sum(adj.P.Val < qThresh & P.Value < qThresh)), 
+      list(Gene = toupper(annot.symbol))]
+
+    myt <- merge(A, B, by="Gene") %>%
+      .[, table(NSign.x > 0, NSign.y > 0)]
+    f <- myFisherTest(myt) %>% .[, Type := "All"]
+    res <- rbind(res, f)
+  }, error = function(e) {
+    message(glue("Error in {t}"))
+  })
+
+  res  
+}
+
+
+```
+
+## Appendix PD vs Controls {.tabset}
+
+### vs Brain PFC Replicate + GLU
+
+```{r}
+dt <- getAnnotatrEnrichments(
+  prefix = prefix,
+  experimentA = "Appendix_PDvsControls_Padlock", genomeA = "hg19",
+  experimentB = "Brain_PFCRep_Padlock_withGLU",  genomeB = "hg19",
+  qThresh = qThresh
+  )
+```
+
+```{r, include=TRUE}
+dt %>%  
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+### vs Brain PFC CG Only
+
+```{r}
+dt <- getAnnotatrEnrichments(
+  prefix = prefix,
+  experimentA = "Appendix_PDvsControls_Padlock", genomeA = "hg19",
+  experimentB = "Brain_PFC_Padlock_CGonly",      genomeB = "hg19",
+  qThresh = qThresh
+  )
+```
+
+```{r, include=TRUE}
+dt %>%  
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+### vs Brain OFB CG only
+
+```{r}
+dt <- getAnnotatrEnrichments(
+  prefix = prefix,
+  experimentA = "Appendix_PDvsControls_Padlock", genomeA = "hg19",
+  experimentB = "Brain_OFB_Padlock_CGonly",      genomeB = "hg19",
+  qThresh = qThresh
+  )
+```
+
+```{r, include=TRUE}
+dt %>%  
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```

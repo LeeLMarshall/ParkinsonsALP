@@ -1,0 +1,31 @@
+---
+title: "Figure 3"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+editor_options: 
+  chunk_output_type: console
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R", chdir=TRUE)
+
+p_load("cowplot")
+```
+
+```{r, include=TRUE, fig.width=7.2, fig.height=7.2}
+ggdraw() + 
+  draw_image("../Figure3/diagram.jpg", 
+    x = 0, y = 0, width = 1, height = 1)
+
+```
+
+

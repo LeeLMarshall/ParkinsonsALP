@@ -1,0 +1,237 @@
+---
+title: "PD Hallmarks"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+
+
+```{r}
+source("../code/common.R", chdir=TRUE)
+p_load(broom)
+p_load("RobustRankAggreg")
+p_load("annotatr")
+```
+
+
+```{r}
+prefix <- "m6"
+qThresh <- 0.05
+
+# Load fit results
+loadFits <- function(analysis, prefix) {
+  x <- fread(glue("../{analysis}/www/{prefix}_{analysis}.csv"))
+  setnames(x, Hmisc::capitalize(colnames(x)))
+  return(x)
+}
+
+app <- loadFits("Appendix_PDvsControls_Padlock", prefix)
+pfc <- loadFits("Brain_PFCRep_Padlock_withGLU", prefix)
+ofb <- loadFits("Brain_OFB_Padlock", prefix)
+mcp <- loadFits("Mice_CecalPatch_Padlock", prefix)
+dss <- loadFits("Mice_DSS_Padlock", prefix)
+
+```
+
+```{r}
+cluster <- makeMyCluster(nNodes = 30)
+# Implement hallmark scheme with target genes
+
+
+ftest <- function(x, y, ...) {
+  tryCatch({
+    f <- fisher.test(table(x, y), ...)
+    list(OR=f$estimate, P=f$p.value)    
+  }, 
+  error = function(e) {
+    return(list(OR=double(), P=double()))
+  })
+}
+rankGenesByEnrichment <- function(fits, geneField, qThresh) {
+  genes <- fits[, unique(get(geneField))]
+  res <- foreach(gene = genes, .combine=rbind, 
+    .export=c("ftest")) %dopar% {
+    require(dplyr)
+    require(data.table)
+    res <- 
+      fits[, ftest(get(geneField) == gene, 
+                  Adj.P.Val < qThresh, 
+                  alternative = "greater")]
+    res$Gene <- toupper(gene)
+    res
+  }
+  res[order(P),]
+}
+
+# For every gene, compute its enrichment
+appGenes <- rankGenesByEnrichment(app, "Gene", qThresh)
+pfcGenes <- rankGenesByEnrichment(pfc[Type == "CG"], "Gene", qThresh)
+ofbGenes <- rankGenesByEnrichment(ofb[Type == "CG"], "Gene", qThresh)
+mcpGenes <- rankGenesByEnrichment(mcp, "Gene", qThresh)
+dssGenes <- rankGenesByEnrichment(
+  dss[, list(
+          Gene, 
+          Adj.P.Val = ifelse(
+            Adj.P.Val < qThresh & `P.GTwt_DSS - GTwt_Water` < 0.05, 
+            0, 1))
+  ], 
+  "Gene", qThresh)
+
+
+rankedGeneList <- list(appGenes$Gene, pfcGenes$Gene, ofbGenes$Gene, mcpGenes$Gene, dssGenes$Gene)
+hallmarkGenes <- aggregateRanks(rankedGeneList, method="RRA") %>%
+head(n=20) %>% .$Name %>% as.character
+
+stopMyCluster(cluster)
+```
+
+```{r, include=TRUE}
+# Visualize the hallmark genes
+pd <- merge(
+  appGenes[Gene %in% hallmarkGenes, list(Gene, Appendix=OR)],
+  pfcGenes[Gene %in% hallmarkGenes, list(Gene, PFC=OR)],
+  by = "Gene", all.x = TRUE, all.y = TRUE) %>%
+merge(., ofbGenes[Gene %in% hallmarkGenes, list(Gene, OFB=OR)],
+  by = "Gene", all.x = TRUE, all.y = TRUE) %>%
+merge(., mcpGenes[Gene %in% hallmarkGenes, list(Gene, M.CecalPatch=OR)],
+  by = "Gene", all.x = TRUE, all.y = TRUE) %>%
+merge(., dssGenes[Gene %in% hallmarkGenes, list(Gene, M.DSS=OR)],
+  by = "Gene", all.x = TRUE, all.y = TRUE)
+pd[, Gene := factor(Gene, levels = hallmarkGenes)] 
+
+# Print
+pd[match(hallmarkGenes, Gene)]
+
+# Plot
+pd %>%
+reshape2::melt(., id.vars = "Gene") %>% 
+setDT %>% 
+setnames("value", "OR") %>%
+ggplot(., aes(Gene, variable, size=log(OR), color=OR > 1)) + 
+  geom_point() + 
+  theme_bw(base_size = 10) + 
+  theme(axis.text.x = element_text(angle = 45, hjust= 1))
+```
+
+
+```{r}
+cluster <- makeMyCluster(nNodes = 30)
+# Annotate CGs with gene names and apply the hallmark ranking
+
+rankUCSCGenesByEnrichment <- function(fit, genome = "hg19", qThresh) {
+  annots <- c(glue('{genome}_basicgenes'))
+  annotations <- build_annotations(genome = genome, annotations = annots)
+
+  fitsgr <- with(fit, GRanges(seqnames=Chr, IRanges(SNP, SNP+1)))
+  if (!is.null(fit$Str))
+    strand(fitsgr) <- fit$Str
+  values(fitsgr) <- fit[, list(ID, P.Value, Adj.P.Val)]
+  annot <- annotate_regions(
+      regions = fitsgr,
+      annotations = annotations,
+      ignore.strand = TRUE,
+      quiet = FALSE)
+  annot <- data.frame(annot) %>% setDT
+  rm(fitsgr)
+
+  rankGenesByEnrichment(
+    # annot[annot.type == glue("{genome}_genes_promoters")], 
+    annot,
+    "annot.symbol", 
+    qThresh)
+}
+
+
+appGenes <- rankUCSCGenesByEnrichment(app, "hg19", qThresh)
+pfcGenes <- rankUCSCGenesByEnrichment(pfc, "hg19", qThresh)
+ofbGenes <- rankUCSCGenesByEnrichment(ofb[Type == "CG"], "hg19", qThresh)
+mcpGenes <- rankUCSCGenesByEnrichment(mcp, "mm10", qThresh)
+dssGenes <- rankUCSCGenesByEnrichment(
+  dss[, list(
+          Gene, Chr, SNP, ID, P.Value,
+          Adj.P.Val = ifelse(
+            Adj.P.Val < qThresh & `P.GTwt_DSS - GTwt_Water` < 0.05, 
+            0, 1))
+  ], 
+  "mm10", qThresh)
+
+
+rankedGeneList <- list(appGenes$Gene, pfcGenes$Gene, ofbGenes$Gene, mcpGenes$Gene, dssGenes$Gene)
+hallmarkGenes <- aggregateRanks(rankedGeneList, method="RRA") %>%
+head(n=20) %>% .$Na
+
+stopMyCluster(cluster)
+```
+
+
+```{r, include=TRUE}
+# Visualize the hallmark genes
+pd <- merge(
+  appGenes[Gene %in% hallmarkGenes, list(Gene, Appendix=OR)],
+  pfcGenes[Gene %in% hallmarkGenes, list(Gene, PFC=OR)],
+  by = "Gene", all.x = TRUE, all.y = TRUE) %>%
+merge(., ofbGenes[Gene %in% hallmarkGenes, list(Gene, OFB=OR)],
+  by = "Gene", all.x = TRUE, all.y = TRUE) %>%
+merge(., mcpGenes[Gene %in% hallmarkGenes, list(Gene, M.CecalPatch=OR)],
+  by = "Gene", all.x = TRUE, all.y = TRUE) %>%
+merge(., dssGenes[Gene %in% hallmarkGenes, list(Gene, M.DSS=OR)],
+  by = "Gene", all.x = TRUE, all.y = TRUE)
+pd[, Gene := factor(Gene, levels = hallmarkGenes)] 
+
+# Print
+pd[match(hallmarkGenes, Gene)]
+
+# Plot
+pd %>%
+reshape2::melt(., id.vars = "Gene") %>% 
+setDT %>% 
+setnames("value", "OR") %>%
+ggplot(., aes(Gene, variable, size=log(OR), color=OR > 1)) + 
+  geom_point() + 
+  theme_bw(base_size = 10) + 
+  theme(axis.text.x = element_text(angle = 45, hjust= 1))
+```
+
+
+```{r, include=TRUE}
+# TODO use new RNA-seq analysis here
+
+# Evaluate the RNA-seq of these genes
+key <- fread("../input/data cohort4_PD_Appendix_Peipei/RNA-Seq_VAI/totalRNA_PD_Control/totalRNA_PD_Control_covar_sva.txt")
+rna <- fread("../input/data cohort4_PD_Appendix_Peipei/RNA-Seq_VAI/totalRNA_PD_Control/PD_Control_DEG_sva_bacon.csv")
+table(hallmarkGenes %in% rna$SYMBOL)
+
+dt <- rna[match(hallmarkGenes, SYMBOL), key$Subject_ID %>% as.character, with=FALSE] %>%
+  as.data.frame
+rownames(dt) <- hallmarkGenes
+stopifnot(all(colnames(dt) == key$Subject_ID))
+
+model <- key %>% dplyr::select(-c(V1, Subject_ID, Sample_ID)) %>%
+model.matrix(~ Diagnosis + ., data = .)
+
+lmFit(dt, model) %>% 
+eBayes %>% 
+topTable(coef = 2, number = Inf, sort.by = "none") %>%
+.$P.Value %>% summary
+
+
+
+```
+
+
+
+
+
+
+
+
+

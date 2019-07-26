@@ -1,0 +1,66 @@
+---
+title: "Hello Prerendered Shiny"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+
+
+```{r setup, include=FALSE}
+source("../code/common.R")
+source("../code/methylKit.R")
+source("../code/plots.R")
+library(impute)
+require(limma)
+require(glue)
+require(rmarkdown)
+suppressWarnings(require(WGCNA))
+
+params <- list(
+  useSVA = TRUE,
+  nPerm = 40,
+  workers = 41,
+  outliers = list(
+    thresholdSD = 3,
+    noOfPCs = 2,
+    removeOutliers = TRUE
+  ),
+  normalize = TRUE,
+  allowStable = 1,
+  addClustersToModel = FALSE,
+  imputeBetas = FALSE,
+  imputeCounts = FALSE
+)
+```
+
+```{r data}
+```
+
+
+# Vienas du trys
+
+```{r, include=TRUE}
+system("hostname", intern=TRUE)
+```
+
+```{r, include=TRUE}
+getwd()
+```
+
+
+Google logo:
+
+
+
+![](www/google.png)
+
+```{r, include=TRUE}
+sessionInfo()
+```
